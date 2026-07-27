@@ -1,0 +1,17 @@
+# Rust
+src-tauri/target/
+
+# Tauri generated
+src-tauri/gen/
+
+# Frontend (T10+)
+node_modules/
+dist/
+.vite/
+
+# Local
+*.local
+.env
+.DS_Store
+CLAUDE.md
+.claude/

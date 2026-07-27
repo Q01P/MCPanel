@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MCPanel",
+  "version": "0.1.0",
+  "identifier": "com.xseth.mcpanel",
+  "build": {
+    "frontendDist": "dist-placeholder"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MCPanel",
+        "width": 1100,
+        "height": 720,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "icon": []
+  }
+}

@@ -1,0 +1,60 @@
+[package]
+name = "mcpanel"
+version = "0.1.0"
+description = "MCPanel — a control panel for local MCP servers"
+authors = ["Oussema Taleb <taleb@xseth.com>"]
+license = "MIT"
+repository = "https://github.com/Q01P/mcpanel"
+edition = "2024"
+rust-version = "1.85"
+
+[lib]
+name = "mcpanel_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = [] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.19"
+
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "net"] }
+tokio-util = { version = "0.7.19", features = ["codec"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+
+axum = "0.8.9"
+hyper = "1.11.0"
+tower = { version = "0.5.3", features = ["timeout", "util"] }
+
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+dashmap = "6.2.1"
+bytes = "1.12.1"
+keyring = "4.1.5"
+ring = "0.17.14"
+
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_System_Console",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
+[dev-dependencies]
+anyhow = "1.0"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
