@@ -198,9 +198,10 @@ tasks** — do not scaffold ahead of the agreed task.
 
 - [x] **T0** — Backend scaffold: pinned `Cargo.toml`, `error.rs` (`AppError`),
       stub `lib.rs`/`main.rs`/`build.rs`/`tauri.conf.json`
-- [ ] **T1** — Real `lib.rs`/`main.rs`: tracing init, Axum gateway skeleton
-      (token, `/sse` stub), Tauri builder  ← **next**
+- [x] **T1** — Real `lib.rs`/`main.rs`: tracing init, Axum gateway skeleton
+      (token, `/sse` stub), Tauri builder
 - [ ] **T2** — `state.rs`: AppState (DashMap registry + SQLite pool + channels)
+      ← **next**
 - [ ] **T3** — `mcp/process.rs`: spawn/reap with orphan prevention + fixture
       + orphan tests
 - [ ] **T4** — `mcp/stream.rs`: LinesCodec pipelines, ANSI strip, bounded
