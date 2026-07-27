@@ -1,4 +1,5 @@
 pub mod error;
+pub mod mcp;
 pub mod server;
 pub mod state;
 
