@@ -203,9 +203,10 @@ tasks** — do not scaffold ahead of the agreed task.
 - [x] **T2** — `state.rs`: AppState (DashMap registry + SQLite pool + channels)
 - [x] **T3** — `mcp/process.rs`: spawn/reap with orphan prevention + fixture
       + orphan tests
-- [ ] **T4** — `mcp/stream.rs`: LinesCodec pipelines, ANSI strip, bounded
-      channels  ← **next**
+- [x] **T4** — `mcp/stream.rs`: line pipelines (capped custom codec), ANSI
+      strip, bounded channels
 - [ ] **T5** — `mcp/protocol.rs`: JSON-RPC correlation + initialize handshake
+      ← **next**
 - [ ] **T6** — `db/`: rusqlite store, migrations, server CRUD
 - [ ] **T7** — `commands/`: Tauri IPC (list/add/update/remove/start/stop)
 - [ ] **T8** — `server/`: full gateway (`/sse`, `/mcp/{server_id}`, timeouts)
