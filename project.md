@@ -200,10 +200,9 @@ tasks** — do not scaffold ahead of the agreed task.
       stub `lib.rs`/`main.rs`/`build.rs`/`tauri.conf.json`
 - [x] **T1** — Real `lib.rs`/`main.rs`: tracing init, Axum gateway skeleton
       (token, `/sse` stub), Tauri builder
-- [ ] **T2** — `state.rs`: AppState (DashMap registry + SQLite pool + channels)
-      ← **next**
+- [x] **T2** — `state.rs`: AppState (DashMap registry + SQLite pool + channels)
 - [ ] **T3** — `mcp/process.rs`: spawn/reap with orphan prevention + fixture
-      + orphan tests
+      + orphan tests  ← **next**
 - [ ] **T4** — `mcp/stream.rs`: LinesCodec pipelines, ANSI strip, bounded
       channels
 - [ ] **T5** — `mcp/protocol.rs`: JSON-RPC correlation + initialize handshake
