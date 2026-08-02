@@ -197,7 +197,8 @@ body {
   outline-offset: 2px;
 }
 
-.remove-button {
+.remove-button,
+.edit-button {
   background: none;
   border: 1px solid var(--border);
   color: var(--text-dim);
@@ -212,6 +213,11 @@ body {
   border-color: var(--err);
 }
 
+.edit-button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .add-form h2 {
   font-size: 1rem;
   margin: 0 0 0.6rem;
@@ -219,7 +225,7 @@ body {
 
 .add-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr 2fr auto;
+  grid-template-columns: 1fr 1fr 2fr 1fr auto;
   gap: 0.5rem;
 }
 
@@ -252,6 +258,85 @@ input:focus-visible {
   font-size: 0.78rem;
   margin-top: 0.15rem;
   overflow-wrap: anywhere;
+}
+
+.env-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.env-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.env-row input[type="text"],
+.env-row input[type="password"],
+.env-row input:not([type]) {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.env-secret-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.env-row > button,
+.env-add {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.env-add {
+  align-self: flex-start;
+}
+
+.form-error {
+  color: var(--err);
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.form-actions button[type="submit"] {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  padding: 0.45rem 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.form-actions button[type="button"] {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 0.45rem 1rem;
+  cursor: pointer;
 }
 
 .add-fields button {

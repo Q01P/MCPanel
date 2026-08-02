@@ -20,6 +20,7 @@ function StatusBadge({ status }: { status: ServerStatus }) {
 function ServerRow({ server }: { server: ServerOverview }) {
   const toggle = usePanel((s) => s.toggle);
   const remove = usePanel((s) => s.remove);
+  const setEditing = usePanel((s) => s.setEditing);
   const selectLogs = useLogs((s) => s.select);
   const logsOpen = useLogs((s) => s.selected === server.id);
 
@@ -61,6 +62,14 @@ function ServerRow({ server }: { server: ServerOverview }) {
         onClick={() => selectLogs(logsOpen ? null : server.id)}
       >
         logs
+      </button>
+      <button
+        type="button"
+        className="edit-button"
+        title="Edit server"
+        onClick={() => setEditing(server)}
+      >
+        edit
       </button>
       <button
         type="button"

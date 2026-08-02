@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { AddServerForm } from "./components/AddServerForm";
 import { LogViewer } from "./components/LogViewer";
+import { ServerForm } from "./components/ServerForm";
 import { ServerList } from "./components/ServerList";
 import { Workbench } from "./components/Workbench";
 import { connectEvents } from "./events";
@@ -46,7 +46,7 @@ export default function App() {
       <ServerList />
       <LogViewer />
       <Workbench />
-      <AddServerForm />
+      <ServerForm />
     </main>
   );
 }

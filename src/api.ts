@@ -4,6 +4,12 @@ import type { GatewayInfo, NewServer, ServerOverview, ServerRecord } from "./typ
 export const listServers = () => invoke<ServerOverview[]>("list_servers");
 export const addServer = (server: NewServer) =>
   invoke<ServerRecord>("add_server", { new: server });
+export const updateServer = (record: ServerRecord) =>
+  invoke<void>("update_server", { record });
+export const setServerSecret = (id: number, key: string, value: string) =>
+  invoke<void>("set_server_secret", { id, key, value });
+export const deleteServerSecret = (id: number, key: string) =>
+  invoke<void>("delete_server_secret", { id, key });
 export const removeServer = (id: number) => invoke<void>("remove_server", { id });
 export const startServer = (id: number) => invoke<void>("start_server", { id });
 export const stopServer = (id: number) => invoke<void>("stop_server", { id });

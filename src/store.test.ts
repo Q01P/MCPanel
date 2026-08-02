@@ -6,7 +6,9 @@ vi.mock("./api", async (importOriginal) => {
   return {
     ...actual,
     listServers: vi.fn(async () => []),
-    addServer: vi.fn(async () => ({}) as never),
+    addServer: vi.fn(async () => ({ id: 42 }) as never),
+    updateServer: vi.fn(async () => {}),
+    setServerSecret: vi.fn(async () => {}),
     removeServer: vi.fn(async () => {}),
   };
 });
@@ -69,13 +71,25 @@ describe("applyEvent", () => {
 });
 
 describe("mutations report success", () => {
-  it("add resolves false and keeps an error when the backend rejects", async () => {
+  it("add resolves the created record so callers can chain secrets onto it", async () => {
+    const record = await usePanel.getState().add({
+      name: "fresh",
+      command: "true",
+      args: [],
+      env: {},
+      cwd: null,
+      auto_start: false,
+    });
+    expect(record?.id).toBe(42);
+  });
+
+  it("add resolves null and keeps an error when the backend rejects", async () => {
     vi.mocked(api.addServer).mockRejectedValueOnce({
-      code: "db",
+      code: "conflict",
       message: "name taken",
     });
 
-    const ok = await usePanel.getState().add({
+    const record = await usePanel.getState().add({
       name: "dupe",
       command: "true",
       args: [],
@@ -84,8 +98,18 @@ describe("mutations report success", () => {
       auto_start: false,
     });
 
-    expect(ok).toBe(false);
+    expect(record).toBeNull();
     expect(usePanel.getState().error).toBe("name taken");
+  });
+
+  it("setSecret failure surfaces the error and resolves false", async () => {
+    vi.mocked(api.setServerSecret).mockRejectedValueOnce({
+      code: "keyring",
+      message: "store locked",
+    });
+    const ok = await usePanel.getState().setSecret(1, "TOKEN", "v");
+    expect(ok).toBe(false);
+    expect(usePanel.getState().error).toBe("store locked");
   });
 
   it("remove drops the server's log bucket on success", async () => {

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import * as api from "./api";
 import { useLogs } from "./logs";
-import type { AppEvent, NewServer, ServerOverview } from "./types";
+import type { AppEvent, NewServer, ServerOverview, ServerRecord } from "./types";
 
 interface PanelState {
   servers: ServerOverview[];
@@ -9,13 +9,19 @@ interface PanelState {
   /** The last full-list fetch failed — distinct from "no servers exist". */
   loadFailed: boolean;
   error: string | null;
+  /** The server whose config the form is editing; null = add mode. */
+  editing: ServerOverview | null;
   load: () => Promise<void>;
   resync: () => void;
-  /** Mutations resolve `true` on success so callers can keep user input
+  /** Mutations resolve truthy on success so callers can keep user input
    * (form fields) instead of discarding it on a failed backend call. */
-  add: (server: NewServer) => Promise<boolean>;
+  add: (server: NewServer) => Promise<ServerRecord | null>;
+  update: (record: ServerRecord) => Promise<boolean>;
+  setSecret: (id: number, key: string, value: string) => Promise<boolean>;
+  deleteSecret: (id: number, key: string) => Promise<boolean>;
   remove: (id: number) => Promise<boolean>;
   toggle: (id: number, run: boolean) => Promise<boolean>;
+  setEditing: (server: ServerOverview | null) => void;
   applyEvent: (event: AppEvent) => void;
   clearError: () => void;
 }
@@ -29,6 +35,7 @@ export const usePanel = create<PanelState>((set, get) => ({
   loaded: false,
   loadFailed: false,
   error: null,
+  editing: null,
 
   load: async () => {
     try {
@@ -40,7 +47,40 @@ export const usePanel = create<PanelState>((set, get) => ({
 
   add: async (server) => {
     try {
-      await api.addServer(server);
+      const record = await api.addServer(server);
+      await get().load();
+      return record;
+    } catch (error) {
+      set({ error: api.describeError(error) });
+      return null;
+    }
+  },
+
+  update: async (record) => {
+    try {
+      await api.updateServer(record);
+      await get().load();
+      return true;
+    } catch (error) {
+      set({ error: api.describeError(error) });
+      return false;
+    }
+  },
+
+  setSecret: async (id, key, value) => {
+    try {
+      await api.setServerSecret(id, key, value);
+      await get().load();
+      return true;
+    } catch (error) {
+      set({ error: api.describeError(error) });
+      return false;
+    }
+  },
+
+  deleteSecret: async (id, key) => {
+    try {
+      await api.deleteServerSecret(id, key);
       await get().load();
       return true;
     } catch (error) {
@@ -53,8 +93,10 @@ export const usePanel = create<PanelState>((set, get) => ({
     try {
       await api.removeServer(id);
       // Removal confirmed — retire the log bucket here so every caller
-      // (not just the row button) keeps the two stores consistent.
+      // (not just the row button) keeps the two stores consistent, and
+      // close the edit form if it was showing the deleted server.
       useLogs.getState().drop(id);
+      if (get().editing?.id === id) set({ editing: null });
       await get().load();
       return true;
     } catch (error) {
@@ -98,6 +140,8 @@ export const usePanel = create<PanelState>((set, get) => ({
       ),
     });
   },
+
+  setEditing: (server) => set({ editing: server }),
 
   clearError: () => set({ error: null }),
 }));
