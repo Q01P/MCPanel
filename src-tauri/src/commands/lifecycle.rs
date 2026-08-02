@@ -54,13 +54,54 @@ pub struct ServerOverview {
     pub status: ServerStatus,
 }
 
+/// Reject configs that can only fail later and worse: a blank name or
+/// command, a working directory that doesn't exist, an empty env key.
+fn validate_config<'a>(
+    name: &str,
+    command: &str,
+    cwd: Option<&str>,
+    mut env_keys: impl Iterator<Item = &'a String>,
+) -> AppResult<()> {
+    if name.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "server name must not be empty".into(),
+        ));
+    }
+    if command.trim().is_empty() {
+        return Err(AppError::InvalidInput("command must not be empty".into()));
+    }
+    if let Some(cwd) = cwd {
+        if !std::path::Path::new(cwd).is_dir() {
+            return Err(AppError::InvalidInput(format!(
+                "working directory does not exist: {cwd}"
+            )));
+        }
+    }
+    if env_keys.any(|key| key.trim().is_empty()) {
+        return Err(AppError::InvalidInput(
+            "environment variable names must not be empty".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn add(state: &AppState, new: NewServer) -> AppResult<ServerRecord> {
+    validate_config(&new.name, &new.command, new.cwd.as_deref(), new.env.keys())?;
     state
         .with_db(move |conn| db::insert_server(conn, &new))
         .await
 }
 
 pub async fn update(state: &AppState, record: ServerRecord) -> AppResult<()> {
+    validate_config(
+        &record.name,
+        &record.command,
+        record.cwd.as_deref(),
+        record.env.keys(),
+    )?;
+    // Read-modify-write over a released connection — hold the config lock so
+    // a concurrent set/delete_secret can't have its marker clobbered.
+    let _config = state.lock_config().await;
     let id = record.id;
     let old = state.with_db(move |conn| db::get_server(conn, id)).await?;
     // Secret keys whose marker disappears in this update would leave their
@@ -77,11 +118,11 @@ pub async fn update(state: &AppState, record: ServerRecord) -> AppResult<()> {
         .with_db(move |conn| db::update_server(conn, &record))
         .await?;
     if !removed.is_empty() {
-        tokio::task::spawn_blocking(move || {
+        crate::state::blocking(move || {
             crate::secrets::delete_keys_best_effort(id, removed.iter());
+            Ok(())
         })
-        .await
-        .map_err(|join| AppError::Io(std::io::Error::other(join)))?;
+        .await?;
     }
     Ok(())
 }
@@ -98,9 +139,11 @@ pub async fn update(state: &AppState, record: ServerRecord) -> AppResult<()> {
 pub async fn remove(state: &AppState, id: ServerId) -> AppResult<()> {
     stop(state, id).await?;
     let record = state.with_db(move |conn| db::get_server(conn, id)).await?;
-    tokio::task::spawn_blocking(move || crate::secrets::delete_server_secrets(&record))
-        .await
-        .map_err(|join| AppError::Io(std::io::Error::other(join)))?;
+    crate::state::blocking(move || {
+        crate::secrets::delete_server_secrets(&record);
+        Ok(())
+    })
+    .await?;
     state
         .with_db(move |conn| db::delete_server(conn, id))
         .await?;
@@ -213,10 +256,9 @@ async fn run_startup(
     // config, never in state, DB, or logs. An abandoned resolve finishes
     // harmlessly on the blocking pool.
     let env_record = record.clone();
-    let resolve = tokio::task::spawn_blocking(move || crate::secrets::resolve_env(&env_record));
     let env = tokio::select! {
         _ = cancel.cancelled() => return Ok(StartOutcome::Cancelled),
-        joined = resolve => joined.map_err(|join| AppError::Io(std::io::Error::other(join)))??,
+        env = crate::state::blocking(move || crate::secrets::resolve_env(&env_record)) => env?,
     };
 
     let config = ProcessConfig {
@@ -377,12 +419,17 @@ pub async fn set_secret(
     key: String,
     value: String,
 ) -> AppResult<()> {
+    if key.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "secret key must not be empty".into(),
+        ));
+    }
+    // Same read-modify-write shape as `update` — serialize with it.
+    let _config = state.lock_config().await;
     let mut record = state.with_db(move |conn| db::get_server(conn, id)).await?;
 
     let store_key = key.clone();
-    tokio::task::spawn_blocking(move || crate::secrets::store_secret(id, &store_key, &value))
-        .await
-        .map_err(|join| AppError::Io(std::io::Error::other(join)))??;
+    crate::state::blocking(move || crate::secrets::store_secret(id, &store_key, &value)).await?;
 
     if record.env.get(&key) != Some(&EnvValue::Secret) {
         record.env.insert(key, EnvValue::Secret);
@@ -395,12 +442,11 @@ pub async fn set_secret(
 
 /// Remove a secret from the credential store and drop its env marker.
 pub async fn delete_secret(state: &AppState, id: ServerId, key: String) -> AppResult<()> {
+    let _config = state.lock_config().await;
     let mut record = state.with_db(move |conn| db::get_server(conn, id)).await?;
 
     let delete_key = key.clone();
-    tokio::task::spawn_blocking(move || crate::secrets::delete_secret(id, &delete_key))
-        .await
-        .map_err(|join| AppError::Io(std::io::Error::other(join)))??;
+    crate::state::blocking(move || crate::secrets::delete_secret(id, &delete_key)).await?;
 
     if record.env.remove(&key).is_some() {
         state

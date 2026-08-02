@@ -247,3 +247,43 @@ async fn startup_migration_moves_name_keyed_entries_idempotently() {
 
     lifecycle::remove(&state, record.id).await.expect("cleanup");
 }
+
+/// update and set_secret racing the same record must end consistent: the
+/// rename always lands, and the secret's env marker and keyring entry agree
+/// (both present or both cleaned) — never a lost marker with an orphaned
+/// credential. The config-write lock serializes the two read-modify-writes.
+#[tokio::test]
+async fn concurrent_update_and_set_secret_stay_consistent() {
+    if !store_available() {
+        eprintln!("skipping: no OS credential store available");
+        return;
+    }
+
+    let state = test_state();
+    let record = add_with_secret_marker(&state, "race-config", "A").await;
+    let mut renamed = record.clone();
+    renamed.name = "race-config-renamed".into();
+
+    let (updated, stored) = tokio::join!(
+        lifecycle::update(&state, renamed),
+        lifecycle::set_secret(&state, record.id, "B".into(), "hunter2".into()),
+    );
+    updated.expect("update");
+    stored.expect("set_secret");
+
+    let id = record.id;
+    let refreshed = state
+        .with_db(move |conn| db::get_server(conn, id))
+        .await
+        .expect("get");
+    assert_eq!(refreshed.name, "race-config-renamed", "rename always lands");
+
+    let marker = refreshed.env.get("B") == Some(&EnvValue::Secret);
+    let entry = secrets::get_secret(record.id, "B").is_ok();
+    assert_eq!(
+        marker, entry,
+        "env marker and keyring entry must agree (marker: {marker}, entry: {entry})"
+    );
+
+    lifecycle::remove(&state, record.id).await.expect("cleanup");
+}

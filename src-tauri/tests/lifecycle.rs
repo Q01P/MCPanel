@@ -143,6 +143,35 @@ async fn logs_and_notifications_fan_out_to_app_events() {
 }
 
 #[tokio::test]
+async fn add_rejects_invalid_and_conflicting_configs() {
+    use mcpanel_lib::error::AppError;
+    let state = test_state();
+    let base = |name: &str, command: &str, cwd: Option<&str>| NewServer {
+        name: name.into(),
+        command: command.into(),
+        args: vec![],
+        env: BTreeMap::new(),
+        cwd: cwd.map(Into::into),
+        auto_start: false,
+    };
+
+    let blank_name = lifecycle::add(&state, base("   ", "true", None)).await;
+    assert!(matches!(blank_name, Err(AppError::InvalidInput(_))));
+
+    let blank_command = lifecycle::add(&state, base("ok", "", None)).await;
+    assert!(matches!(blank_command, Err(AppError::InvalidInput(_))));
+
+    let ghost_cwd = lifecycle::add(&state, base("ok", "true", Some("/no/such/dir"))).await;
+    assert!(matches!(ghost_cwd, Err(AppError::InvalidInput(_))));
+
+    lifecycle::add(&state, base("taken", "true", None))
+        .await
+        .expect("valid config");
+    let duplicate = lifecycle::add(&state, base("taken", "true", None)).await;
+    assert!(matches!(duplicate, Err(AppError::Conflict(_))));
+}
+
+#[tokio::test]
 async fn start_unknown_server_fails_without_ghost_entry() {
     let state = test_state();
     let err = lifecycle::start(&state, 4242)

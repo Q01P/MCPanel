@@ -27,11 +27,7 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let conn = db::open(&data_dir.join("mcpanel.sqlite"))?;
-            // Move any legacy name-keyed keyring entries to the id scheme
-            // before any command can resolve env. Synchronous and idempotent;
-            // post-migration cost is one probe per secret key.
             let records = db::list_servers(&conn)?;
-            secrets::migrate_name_keyed_secrets(&records);
             let app_state = state::AppState::new(conn);
             app.manage(app_state.clone());
 
@@ -50,9 +46,18 @@ pub fn run() {
                 },
                 listener,
             ));
-            // Servers marked auto_start come up in the background; failures
-            // surface per-server as Errored, never as a launch failure.
+            // Keyring probes are synchronous and can stall on a locked
+            // credential store — never on the setup thread, or the window
+            // waits on the OS keychain. Migration runs on the blocking pool,
+            // then the auto-start sweep (which may resolve migrated secrets)
+            // follows in the same task; failures surface per-server as
+            // Errored, never as a launch failure.
             tauri::async_runtime::spawn(async move {
+                let _ = state::blocking(move || {
+                    secrets::migrate_name_keyed_secrets(&records);
+                    Ok(())
+                })
+                .await;
                 commands::lifecycle::start_auto_servers(&auto_state).await;
             });
             info!(target: "app", "MCPanel starting; gateway bound on {addr}");

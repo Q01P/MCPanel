@@ -135,6 +135,24 @@ pub struct AppState {
     registry: Arc<DashMap<ServerId, ServerEntry>>,
     db: Arc<Mutex<rusqlite::Connection>>,
     events: broadcast::Sender<AppEvent>,
+    /// Serializes config read-modify-write cycles (`update`, `set_secret`,
+    /// `delete_secret`): `with_db` releases the connection between the read
+    /// and the write, so without this two concurrent mutations lose one
+    /// side's changes (e.g. an update clobbering a fresh secret marker).
+    config_write: Arc<tokio::sync::Mutex<()>>,
+}
+
+/// Run a blocking closure on the blocking pool. A panicked task surfaces as
+/// `AppError::Internal`, not `Io` — the frontend matches on codes, and "our
+/// task died" must stay distinguishable from a real I/O failure.
+pub async fn blocking<T, F>(f: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> AppResult<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|join| AppError::Internal(join.to_string()))?
 }
 
 impl AppState {
@@ -146,7 +164,13 @@ impl AppState {
             registry: Arc::new(DashMap::new()),
             db: Arc::new(Mutex::new(db)),
             events,
+            config_write: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+
+    /// Hold this guard across a config read-modify-write; see `config_write`.
+    pub async fn lock_config(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.config_write.lock().await
     }
 
     pub fn db(&self) -> Arc<Mutex<rusqlite::Connection>> {
@@ -292,14 +316,13 @@ impl AppState {
         F: FnOnce(&rusqlite::Connection) -> AppResult<T> + Send + 'static,
     {
         let db = self.db();
-        tokio::task::spawn_blocking(move || {
+        blocking(move || {
             let conn = db
                 .lock()
-                .map_err(|_| AppError::Io(std::io::Error::other("db lock poisoned")))?;
+                .map_err(|_| AppError::Internal("db lock poisoned".into()))?;
             f(&conn)
         })
         .await
-        .map_err(|join| AppError::Io(std::io::Error::other(join)))?
     }
 }
 

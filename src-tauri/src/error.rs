@@ -11,6 +11,17 @@ pub enum AppError {
     #[error("server not found: {0}")]
     ServerNotFound(String),
 
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("conflict: {0}")]
+    Conflict(String),
+
+    /// Our own machinery failed (a panicked blocking task, a poisoned
+    /// lock) — kept apart from `Io` so real I/O failures stay diagnosable.
+    #[error("internal error: {0}")]
+    Internal(String),
+
     #[error("MCP handshake failed: {0}")]
     Handshake(String),
 
@@ -45,6 +56,9 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::ServerNotFound(_) => "server_not_found",
+            Self::InvalidInput(_) => "invalid_input",
+            Self::Conflict(_) => "conflict",
+            Self::Internal(_) => "internal",
             Self::Handshake(_) => "handshake",
             Self::Timeout(_) => "timeout",
             Self::Unauthorized => "unauthorized",
@@ -60,6 +74,8 @@ impl AppError {
     pub fn status(&self) -> StatusCode {
         match self {
             Self::ServerNotFound(_) => StatusCode::NOT_FOUND,
+            Self::InvalidInput(_) => StatusCode::BAD_REQUEST,
+            Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             // The child MCP server is the gateway's upstream.
             Self::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
@@ -70,7 +86,9 @@ impl AppError {
             Self::Handshake(_) | Self::Rpc { .. } | Self::ConnectionClosed | Self::Json(_) => {
                 StatusCode::BAD_GATEWAY
             }
-            Self::Io(_) | Self::Db(_) | Self::Keyring(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Io(_) | Self::Db(_) | Self::Keyring(_) | Self::Internal(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         }
     }
 }
@@ -94,6 +112,27 @@ impl IntoResponse for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn domain_errors_map_to_caller_facing_statuses() {
+        assert_eq!(
+            AppError::InvalidInput("x".into()).status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            AppError::Conflict("x".into()).status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            AppError::Internal("x".into()).status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            AppError::ServerNotFound("x".into()).status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(AppError::Internal("x".into()).code(), "internal");
+    }
 
     #[test]
     fn serializes_to_code_and_message() {

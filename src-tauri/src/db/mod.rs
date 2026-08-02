@@ -108,6 +108,18 @@ fn migrate(conn: &mut Connection) -> AppResult<()> {
     Ok(())
 }
 
+/// Surface the `servers.name` UNIQUE violation as a `Conflict` the UI can
+/// present ("name taken") instead of a 500 leaking raw SQL text.
+fn map_name_conflict(err: rusqlite::Error, name: &str) -> AppError {
+    if let rusqlite::Error::SqliteFailure(code, Some(message)) = &err {
+        if code.code == rusqlite::ErrorCode::ConstraintViolation && message.contains("servers.name")
+        {
+            return AppError::Conflict(format!("a server named \"{name}\" already exists"));
+        }
+    }
+    err.into()
+}
+
 pub fn insert_server(conn: &Connection, new: &NewServer) -> AppResult<ServerRecord> {
     conn.execute(
         "INSERT INTO servers (name, command, args, env, cwd, auto_start)
@@ -120,7 +132,8 @@ pub fn insert_server(conn: &Connection, new: &NewServer) -> AppResult<ServerReco
             new.cwd,
             new.auto_start,
         ],
-    )?;
+    )
+    .map_err(|e| map_name_conflict(e, &new.name))?;
     get_server(conn, conn.last_insert_rowid())
 }
 
@@ -149,20 +162,22 @@ pub fn list_servers(conn: &Connection) -> AppResult<Vec<ServerRecord>> {
 }
 
 pub fn update_server(conn: &Connection, record: &ServerRecord) -> AppResult<()> {
-    let changed = conn.execute(
-        "UPDATE servers
+    let changed = conn
+        .execute(
+            "UPDATE servers
          SET name = ?2, command = ?3, args = ?4, env = ?5, cwd = ?6, auto_start = ?7
          WHERE id = ?1",
-        params![
-            record.id,
-            record.name,
-            record.command,
-            serde_json::to_string(&record.args)?,
-            serde_json::to_string(&record.env)?,
-            record.cwd,
-            record.auto_start,
-        ],
-    )?;
+            params![
+                record.id,
+                record.name,
+                record.command,
+                serde_json::to_string(&record.args)?,
+                serde_json::to_string(&record.env)?,
+                record.cwd,
+                record.auto_start,
+            ],
+        )
+        .map_err(|e| map_name_conflict(e, &record.name))?;
     if changed == 0 {
         return Err(AppError::ServerNotFound(record.id.to_string()));
     }
@@ -249,12 +264,27 @@ mod tests {
     }
 
     #[test]
-    fn names_are_unique() {
+    fn duplicate_names_surface_as_conflict() {
         let conn = open_in_memory().unwrap();
-        insert_server(&conn, &sample()).unwrap();
+        let first = insert_server(&conn, &sample()).unwrap();
         assert!(matches!(
             insert_server(&conn, &sample()),
-            Err(AppError::Db(_))
+            Err(AppError::Conflict(_))
+        ));
+
+        // Renaming onto a taken name conflicts the same way.
+        let mut second = insert_server(
+            &conn,
+            &NewServer {
+                name: "other".into(),
+                ..sample()
+            },
+        )
+        .unwrap();
+        second.name = first.name;
+        assert!(matches!(
+            update_server(&conn, &second),
+            Err(AppError::Conflict(_))
         ));
     }
 
