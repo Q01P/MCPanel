@@ -22,9 +22,16 @@ async fn handshake_happy_path_then_requests() {
     let hs = handle.client.handshake().await.expect("handshake");
     assert_eq!(hs.protocol_version, PROTOCOL_VERSION);
     assert_eq!(hs.server_info["name"], "mock-mcp-server");
-    assert!(hs.capabilities.get("tools").is_some(), "capabilities captured");
+    assert!(
+        hs.capabilities.get("tools").is_some(),
+        "capabilities captured"
+    );
 
-    let pong = handle.client.request("ping", json!({})).await.expect("ping");
+    let pong = handle
+        .client
+        .request("ping", json!({}))
+        .await
+        .expect("ping");
     assert_eq!(pong, json!({}));
 
     let tools = handle
@@ -155,8 +162,7 @@ async fn handshake_rejects_unsupported_protocol_version() {
 /// server sent.
 #[tokio::test]
 async fn notification_overflow_is_surfaced_as_gap() {
-    let (mut managed, mut handle, _stderr) =
-        spawn_connected(&["--notify-flood"], HAPPY_TIMEOUT);
+    let (mut managed, mut handle, _stderr) = spawn_connected(&["--notify-flood"], HAPPY_TIMEOUT);
     handle.client.handshake().await.expect("handshake");
 
     // Let the router flood the advisory channel while nobody drains: poll

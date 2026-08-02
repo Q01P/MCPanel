@@ -31,7 +31,10 @@ async fn stderr_ansi_is_stripped() {
 #[tokio::test]
 async fn stdout_garbage_bytes_are_stripped() {
     let (mut managed, mut streams) = spawn_fixture(&["--garbage"]);
-    assert_eq!(next_line(&mut streams.stdout).await, "mock-mcp-server booting...");
+    assert_eq!(
+        next_line(&mut streams.stdout).await,
+        "mock-mcp-server booting..."
+    );
     let garbage_line = next_line(&mut streams.stdout).await;
     assert!(
         garbage_line.chars().all(|c| !c.is_control()),
@@ -79,4 +82,3 @@ async fn flooding_server_is_bounded_not_buffered() {
     );
     assert!(dropped > 0, "a 300ms flood should overflow the channel");
 }
-

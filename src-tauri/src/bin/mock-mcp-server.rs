@@ -40,7 +40,9 @@ fn main() {
     }
 
     if has("--ansi") {
-        eprintln!("\x1b[1;31merror:\x1b[0m \x1b[32mall good actually\x1b[0m \x1b[4munderlined\x1b[0m");
+        eprintln!(
+            "\x1b[1;31merror:\x1b[0m \x1b[32mall good actually\x1b[0m \x1b[4munderlined\x1b[0m"
+        );
     }
 
     if has("--garbage") {

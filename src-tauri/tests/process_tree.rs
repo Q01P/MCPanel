@@ -8,9 +8,9 @@ mod common;
 #[cfg(target_os = "linux")]
 use std::process::Stdio;
 
-use common::{alive, spawn_tree, wait_for};
 #[cfg(target_os = "linux")]
 use common::fixture_path;
+use common::{alive, spawn_tree, wait_for};
 #[cfg(target_os = "linux")]
 use tokio::io::{AsyncBufReadExt, BufReader};
 

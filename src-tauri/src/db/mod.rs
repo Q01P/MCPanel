@@ -125,12 +125,15 @@ pub fn insert_server(conn: &Connection, new: &NewServer) -> AppResult<ServerReco
 }
 
 pub fn get_server(conn: &Connection, id: ServerId) -> AppResult<ServerRecord> {
-    conn.query_row("SELECT id, name, command, args, env, cwd, auto_start FROM servers WHERE id = ?1",
-        params![id], row_to_record)
-        .map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => AppError::ServerNotFound(id.to_string()),
-            other => other.into(),
-        })?
+    conn.query_row(
+        "SELECT id, name, command, args, env, cwd, auto_start FROM servers WHERE id = ?1",
+        params![id],
+        row_to_record,
+    )
+    .map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => AppError::ServerNotFound(id.to_string()),
+        other => other.into(),
+    })?
 }
 
 pub fn list_servers(conn: &Connection) -> AppResult<Vec<ServerRecord>> {
@@ -202,7 +205,12 @@ mod tests {
             command: "npx".into(),
             args: vec!["-y".into(), "some-mcp-server".into()],
             env: BTreeMap::from([
-                ("PLAIN".into(), EnvValue::Plain { value: "visible".into() }),
+                (
+                    "PLAIN".into(),
+                    EnvValue::Plain {
+                        value: "visible".into(),
+                    },
+                ),
                 ("API_KEY".into(), EnvValue::Secret),
             ]),
             cwd: Some("/tmp".into()),
@@ -308,7 +316,9 @@ mod tests {
         }
 
         let conn = open(&path).unwrap();
-        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(version, MIGRATIONS.len() as i64);
         let record = get_server(&conn, 7).unwrap();
         assert_eq!(record.name, "legacy");
@@ -325,12 +335,15 @@ mod tests {
 
     #[test]
     fn migrations_apply_once_and_persist() {
-        let path = std::env::temp_dir().join(format!("mcpanel-db-test-{}.sqlite", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("mcpanel-db-test-{}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
 
         {
             let conn = open(&path).unwrap();
-            let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+            let version: i64 = conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(version, MIGRATIONS.len() as i64);
             insert_server(&conn, &sample()).unwrap();
         }

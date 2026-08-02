@@ -325,7 +325,10 @@ mod tests {
         assert_eq!(state.status(1), ServerStatus::Starting);
         assert!(matches!(
             events.try_recv().unwrap(),
-            AppEvent::StatusChanged { server_id: 1, status: ServerStatus::Starting }
+            AppEvent::StatusChanged {
+                server_id: 1,
+                status: ServerStatus::Starting
+            }
         ));
 
         state.set_status(1, ServerStatus::Stopped);
@@ -365,7 +368,12 @@ mod tests {
         let state = state();
         let guard = state.try_begin_start(1).expect("claim");
         guard.token().cancel();
-        state.set_status(1, ServerStatus::Errored { message: "boom".into() });
+        state.set_status(
+            1,
+            ServerStatus::Errored {
+                message: "boom".into(),
+            },
+        );
         drop(guard);
 
         let fresh = state.try_begin_start(1).expect("reclaim after Errored");
@@ -394,7 +402,9 @@ mod tests {
 
         let event = AppEvent::StatusChanged {
             server_id: 7,
-            status: ServerStatus::Errored { message: "handshake timeout".into() },
+            status: ServerStatus::Errored {
+                message: "handshake timeout".into(),
+            },
         };
         assert_eq!(
             serde_json::to_value(&event).unwrap(),

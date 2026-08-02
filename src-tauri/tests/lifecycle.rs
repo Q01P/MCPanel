@@ -48,7 +48,10 @@ async fn full_lifecycle_walks_the_state_machine() {
     assert_eq!(state.status(id), ServerStatus::Running);
 
     lifecycle::stop(&state, id).await.expect("stop");
-    wait_for("Stopped status", || state.status(id) == ServerStatus::Stopped).await;
+    wait_for("Stopped status", || {
+        state.status(id) == ServerStatus::Stopped
+    })
+    .await;
     assert!(state.runtime(id).is_none(), "registry entry cleared");
     wait_for("process death", || !alive(runtime.pid as i32)).await;
 }
@@ -93,7 +96,9 @@ async fn crash_is_reported_as_errored() {
 
     // And stop resets the Errored entry to Stopped instead of signalling
     // the dead child's (possibly recycled) process group.
-    lifecycle::stop(&state, id).await.expect("stop crashed server");
+    lifecycle::stop(&state, id)
+        .await
+        .expect("stop crashed server");
     assert_eq!(state.status(id), ServerStatus::Stopped);
 }
 
@@ -114,16 +119,18 @@ async fn logs_and_notifications_fan_out_to_app_events() {
             .expect("events within deadline")
             .expect("event channel open");
         match event {
-            AppEvent::Log { server_id, stream, line } if server_id == id => {
-                match stream {
-                    LogStream::Stdout if line.contains("booting") => saw_stdout_garbage = true,
-                    LogStream::Stderr if line.contains("error: all good actually") => {
-                        assert!(!line.contains('\x1b'), "ANSI reached the UI: {line:?}");
-                        saw_stderr = true;
-                    }
-                    _ => {}
+            AppEvent::Log {
+                server_id,
+                stream,
+                line,
+            } if server_id == id => match stream {
+                LogStream::Stdout if line.contains("booting") => saw_stdout_garbage = true,
+                LogStream::Stderr if line.contains("error: all good actually") => {
+                    assert!(!line.contains('\x1b'), "ANSI reached the UI: {line:?}");
+                    saw_stderr = true;
                 }
-            }
+                _ => {}
+            },
             AppEvent::Notification { server_id, payload } if server_id == id => {
                 assert_eq!(payload["method"], "notifications/message");
                 saw_notification = true;
@@ -138,7 +145,9 @@ async fn logs_and_notifications_fan_out_to_app_events() {
 #[tokio::test]
 async fn start_unknown_server_fails_without_ghost_entry() {
     let state = test_state();
-    let err = lifecycle::start(&state, 4242).await.expect_err("unknown id");
+    let err = lifecycle::start(&state, 4242)
+        .await
+        .expect_err("unknown id");
     assert!(matches!(
         err,
         mcpanel_lib::error::AppError::ServerNotFound(_)
@@ -205,7 +214,12 @@ async fn grandchild_pid_from_logs(
             .await
             .expect("grandchild pid within deadline")
             .expect("event channel open");
-        if let AppEvent::Log { server_id, stream: LogStream::Stdout, line } = event {
+        if let AppEvent::Log {
+            server_id,
+            stream: LogStream::Stdout,
+            line,
+        } = event
+        {
             if server_id == id {
                 if let Ok(pid) = line.trim().parse::<i32>() {
                     return pid;
@@ -269,7 +283,10 @@ async fn remove_while_starting_leaves_no_process_and_no_row() {
 
     lifecycle::remove(&state, id).await.expect("remove");
 
-    start_task.await.expect("join").expect("cancelled start is Ok");
+    start_task
+        .await
+        .expect("join")
+        .expect("cancelled start is Ok");
     assert!(lifecycle::list(&state).await.expect("list").is_empty());
     assert_eq!(state.status(id), ServerStatus::Stopped);
     wait_for("grandchild death", || !alive(grandchild)).await;
@@ -325,7 +342,11 @@ async fn concurrent_start_and_remove_settle_clean() {
     let mut grandchildren = Vec::new();
     loop {
         match events.try_recv() {
-            Ok(AppEvent::Log { stream: LogStream::Stdout, line, .. }) => {
+            Ok(AppEvent::Log {
+                stream: LogStream::Stdout,
+                line,
+                ..
+            }) => {
                 if let Ok(pid) = line.trim().parse::<i32>() {
                     grandchildren.push(pid);
                 }

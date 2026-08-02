@@ -55,7 +55,9 @@ pub struct ServerOverview {
 }
 
 pub async fn add(state: &AppState, new: NewServer) -> AppResult<ServerRecord> {
-    state.with_db(move |conn| db::insert_server(conn, &new)).await
+    state
+        .with_db(move |conn| db::insert_server(conn, &new))
+        .await
 }
 
 pub async fn update(state: &AppState, record: ServerRecord) -> AppResult<()> {
@@ -99,7 +101,9 @@ pub async fn remove(state: &AppState, id: ServerId) -> AppResult<()> {
     tokio::task::spawn_blocking(move || crate::secrets::delete_server_secrets(&record))
         .await
         .map_err(|join| AppError::Io(std::io::Error::other(join)))?;
-    state.with_db(move |conn| db::delete_server(conn, id)).await?;
+    state
+        .with_db(move |conn| db::delete_server(conn, id))
+        .await?;
     stop(state, id).await
 }
 
@@ -229,16 +233,34 @@ async fn run_startup(
         .stdin
         .take()
         .ok_or_else(|| std::io::Error::other("child stdin not piped"))?;
-    let ManagedChild { pid, mut child, kill } = managed;
+    let ManagedChild {
+        pid,
+        mut child,
+        kill,
+    } = managed;
 
     let proto = connect(stdin, streams.stdout, request_timeout);
     state.set_status(id, ServerStatus::Initializing);
 
     // Logs and notifications flow to the UI from here on — including
     // anything printed while the handshake is still in flight.
-    tokio::spawn(fan_out_lines(state.clone(), id, LogStream::Stderr, streams.stderr));
-    tokio::spawn(fan_out_lines(state.clone(), id, LogStream::Stdout, proto.stdout_logs));
-    tokio::spawn(fan_out_notifications(state.clone(), id, proto.notifications));
+    tokio::spawn(fan_out_lines(
+        state.clone(),
+        id,
+        LogStream::Stderr,
+        streams.stderr,
+    ));
+    tokio::spawn(fan_out_lines(
+        state.clone(),
+        id,
+        LogStream::Stdout,
+        proto.stdout_logs,
+    ));
+    tokio::spawn(fan_out_notifications(
+        state.clone(),
+        id,
+        proto.notifications,
+    ));
 
     let handshake = tokio::select! {
         _ = cancel.cancelled() => {
@@ -314,7 +336,9 @@ pub async fn stop(state: &AppState, id: ServerId) -> AppResult<()> {
         // A closed channel means the guard dropped — settled either way.
         let settle = tokio::time::timeout(CANCEL_SETTLE_TIMEOUT, settled.wait_for(|done| *done));
         if matches!(settle.await, Err(_elapsed)) {
-            return Err(AppError::Timeout(format!("cancelling start of server {id}")));
+            return Err(AppError::Timeout(format!(
+                "cancelling start of server {id}"
+            )));
         }
     }
 

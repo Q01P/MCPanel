@@ -56,7 +56,10 @@ fn store_get_delete_round_trip() {
     }
 
     secrets::store_secret(-100, "API_KEY", "hunter2").expect("store");
-    assert_eq!(secrets::get_secret(-100, "API_KEY").expect("get"), "hunter2");
+    assert_eq!(
+        secrets::get_secret(-100, "API_KEY").expect("get"),
+        "hunter2"
+    );
 
     secrets::delete_secret(-100, "API_KEY").expect("delete");
     assert!(secrets::get_secret(-100, "API_KEY").is_err());
@@ -78,7 +81,12 @@ fn resolve_env_mixes_plain_and_secret() {
         command: "true".into(),
         args: vec![],
         env: BTreeMap::from([
-            ("PLAIN".into(), EnvValue::Plain { value: "visible".into() }),
+            (
+                "PLAIN".into(),
+                EnvValue::Plain {
+                    value: "visible".into(),
+                },
+            ),
             ("TOKEN".into(), EnvValue::Secret),
         ]),
         cwd: None,

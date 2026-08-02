@@ -21,20 +21,14 @@ pub async fn list_servers(state: State<'_, AppState>) -> AppResult<Vec<ServerOve
 
 #[tauri::command]
 #[tracing::instrument(target = "app::commands", skip(state, new))]
-pub async fn add_server(
-    state: State<'_, AppState>,
-    new: NewServer,
-) -> AppResult<ServerRecord> {
+pub async fn add_server(state: State<'_, AppState>, new: NewServer) -> AppResult<ServerRecord> {
     info!(target: "app::commands", name = %new.name, "add_server");
     lifecycle::add(&state, new).await
 }
 
 #[tauri::command]
 #[tracing::instrument(target = "app::commands", skip(state, record))]
-pub async fn update_server(
-    state: State<'_, AppState>,
-    record: ServerRecord,
-) -> AppResult<()> {
+pub async fn update_server(state: State<'_, AppState>, record: ServerRecord) -> AppResult<()> {
     info!(target: "app::commands", id = record.id, "update_server");
     lifecycle::update(&state, record).await
 }

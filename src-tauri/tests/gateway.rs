@@ -44,7 +44,11 @@ async fn forwards_jsonrpc_to_a_running_server() {
 
     // Request: caller id echoed, result forwarded.
     let response = router(gateway.clone())
-        .oneshot(post(&gateway, id, json!({"jsonrpc":"2.0","id":7,"method":"ping","params":{}})))
+        .oneshot(post(
+            &gateway,
+            id,
+            json!({"jsonrpc":"2.0","id":7,"method":"ping","params":{}}),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -65,7 +69,11 @@ async fn forwards_jsonrpc_to_a_running_server() {
 
     // Notifications (no id) are accepted fire-and-forget.
     let response = router(gateway.clone())
-        .oneshot(post(&gateway, id, json!({"method":"notifications/whatever"})))
+        .oneshot(post(
+            &gateway,
+            id,
+            json!({"method":"notifications/whatever"}),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);

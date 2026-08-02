@@ -65,10 +65,7 @@ pub fn attach(child: &mut tokio::process::Child) -> AppResult<ChildStreams> {
 /// Read frames, sanitize, and forward without ever awaiting channel space:
 /// a full channel means the line is dropped and counted, not that the pump
 /// (and eventually the child's pipe) stalls.
-async fn pump<R: AsyncRead + Unpin + Send + 'static>(
-    reader: R,
-    tx: mpsc::Sender<StreamEvent>,
-) {
+async fn pump<R: AsyncRead + Unpin + Send + 'static>(reader: R, tx: mpsc::Sender<StreamEvent>) {
     let mut frames = FramedRead::new(reader, CappedLines::default());
     let mut forwarder = BoundedForwarder::new(tx);
 
@@ -277,7 +274,10 @@ mod tests {
             strip_ansi("\x1b[1;31merror:\x1b[0m fine \x1b[4munderlined\x1b[0m"),
             "error: fine underlined"
         );
-        assert_eq!(strip_ansi("\u{1}\u{2}\u{7f} pre-JSON garbage"), " pre-JSON garbage");
+        assert_eq!(
+            strip_ansi("\u{1}\u{2}\u{7f} pre-JSON garbage"),
+            " pre-JSON garbage"
+        );
         assert_eq!(strip_ansi("\x1b]0;window title\x07visible"), "visible");
         assert_eq!(strip_ansi("keep\tthe tab"), "keep\tthe tab");
         assert!(matches!(strip_ansi("already clean"), Cow::Borrowed(_)));
@@ -300,7 +300,9 @@ mod tests {
 
     #[tokio::test]
     async fn full_channel_drops_lines_and_reports_the_gap() {
-        let input: Vec<u8> = (0..100).flat_map(|n| format!("line {n}\n").into_bytes()).collect();
+        let input: Vec<u8> = (0..100)
+            .flat_map(|n| format!("line {n}\n").into_bytes())
+            .collect();
         let mut rx = pump_into(input, 4).await;
 
         let mut lines = 0u64;

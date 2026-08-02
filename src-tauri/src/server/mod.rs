@@ -199,7 +199,10 @@ async fn mcp_forward(
         .ok_or_else(|| AppError::ServerNotFound(server_id.to_string()))?;
 
     let Some(caller_id) = request.id else {
-        runtime.client.notify(&request.method, request.params).await?;
+        runtime
+            .client
+            .notify(&request.method, request.params)
+            .await?;
         return Ok(Json(json!({ "accepted": true })));
     };
 
@@ -230,9 +233,7 @@ pub fn router(gateway: Gateway) -> Router {
     let forward = post(mcp_forward).layer(
         ServiceBuilder::new()
             .layer(axum::error_handling::HandleErrorLayer::new(
-                |_: tower::BoxError| async {
-                    AppError::Timeout("gateway request".to_string())
-                },
+                |_: tower::BoxError| async { AppError::Timeout("gateway request".to_string()) },
             ))
             .layer(tower::timeout::TimeoutLayer::new(GATEWAY_BACKSTOP_TIMEOUT)),
     );
@@ -366,7 +367,10 @@ mod tests {
             .uri(format!("/sse?token={}", gateway.token.expose()))
             .body(Body::empty())
             .unwrap();
-        assert_eq!(status_of(&gateway, hostless).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            status_of(&gateway, hostless).await,
+            StatusCode::UNAUTHORIZED
+        );
 
         // The localhost spelling of the bound port is legitimate.
         let localhost = Request::builder()
@@ -390,7 +394,10 @@ mod tests {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(r#"{"method":"ping","id":1}"#))
             .unwrap();
-        assert_eq!(status_of(&gateway, via_query).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            status_of(&gateway, via_query).await,
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[tokio::test]
@@ -419,7 +426,10 @@ mod tests {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(r#"{"method":"ping","id":1}"#))
             .unwrap();
-        assert_eq!(status_of(&gateway, not_running).await, StatusCode::NOT_FOUND);
+        assert_eq!(
+            status_of(&gateway, not_running).await,
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]
