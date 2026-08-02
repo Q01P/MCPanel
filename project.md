@@ -213,10 +213,9 @@ tasks** — do not scaffold ahead of the agreed task.
 - [x] **T10** — Frontend: Vite scaffold, server list + toggles + status badges
 - [x] **T11** — Frontend: virtualized log viewer (follow-tail, dropped-lines
       marker)
-- [ ] **T12** — Frontend: JSON workbench (CodeMirror 6, templates, history)
-      ← **next**
+- [x] **T12** — Frontend: JSON workbench (CodeMirror 6, templates, history)
 - [ ] **T13** — Packaging: bundling on, icons, CI (3-OS matrix), release
-      workflow, size budget check
+      workflow, size budget check  ← **next**
 
 ## 6. Development
 

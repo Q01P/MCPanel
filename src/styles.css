@@ -331,3 +331,125 @@ body {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+.workbench {
+  margin-bottom: 1.5rem;
+}
+
+.workbench h2 {
+  font-size: 1rem;
+  margin: 0 0 0.6rem;
+}
+
+.workbench-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.workbench-toolbar select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.send-button {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  padding: 0.4rem 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.send-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workbench-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.workbench-editor {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.workbench-response {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #101215;
+  color: var(--text);
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  padding: 0.6rem 0.75rem;
+  overflow: auto;
+  max-height: 220px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workbench-history {
+  margin-top: 0.8rem;
+}
+
+.workbench-history h3 {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin: 0 0 0.4rem;
+}
+
+.workbench-history ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.workbench-history button {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 0.35rem 0.6rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.workbench-history button:hover {
+  border-color: var(--accent);
+}
+
+.history-time {
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+}
+
+.history-server {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.history-preview {
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
