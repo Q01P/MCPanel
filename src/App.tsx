@@ -1,19 +1,25 @@
 import { useEffect } from "react";
 import { AddServerForm } from "./components/AddServerForm";
+import { LogViewer } from "./components/LogViewer";
 import { ServerList } from "./components/ServerList";
 import { connectEvents } from "./events";
+import { useLogs } from "./logs";
 import { usePanel } from "./store";
 
 export default function App() {
   const load = usePanel((s) => s.load);
   const applyEvent = usePanel((s) => s.applyEvent);
+  const ingest = useLogs((s) => s.ingest);
   const error = usePanel((s) => s.error);
   const clearError = usePanel((s) => s.clearError);
 
   useEffect(() => {
     void load();
-    return connectEvents(applyEvent);
-  }, [load, applyEvent]);
+    return connectEvents((event) => {
+      applyEvent(event);
+      ingest(event);
+    });
+  }, [load, applyEvent, ingest]);
 
   return (
     <main className="panel">
@@ -32,6 +38,7 @@ export default function App() {
       )}
 
       <ServerList />
+      <LogViewer />
       <AddServerForm />
     </main>
   );

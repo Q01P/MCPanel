@@ -211,9 +211,10 @@ tasks** — do not scaffold ahead of the agreed task.
 - [x] **T8** — `server/`: full gateway (`/sse`, `/mcp/{server_id}`, timeouts)
 - [x] **T9** — Secrets: keyring integration, just-in-time resolution, redaction
 - [x] **T10** — Frontend: Vite scaffold, server list + toggles + status badges
-- [ ] **T11** — Frontend: virtualized log viewer (follow-tail, dropped-lines
-      marker)  ← **next**
+- [x] **T11** — Frontend: virtualized log viewer (follow-tail, dropped-lines
+      marker)
 - [ ] **T12** — Frontend: JSON workbench (CodeMirror 6, templates, history)
+      ← **next**
 - [ ] **T13** — Packaging: bundling on, icons, CI (3-OS matrix), release
       workflow, size budget check
 

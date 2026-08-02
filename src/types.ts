@@ -28,7 +28,9 @@ export type AppEvent =
   | { type: "status_changed"; server_id: number; status: ServerStatus }
   | { type: "log"; server_id: number; stream: LogStreamName; line: string }
   | { type: "log_gap"; server_id: number; stream: LogStreamName; dropped: number }
-  | { type: "notification"; server_id: number; payload: unknown };
+  | { type: "notification"; server_id: number; payload: unknown }
+  // Synthetic gateway marker: this SSE subscriber fell behind the broadcast.
+  | { type: "lagged"; missed: number };
 
 export interface GatewayInfo {
   url: string;

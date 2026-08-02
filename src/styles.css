@@ -239,3 +239,95 @@ body {
   font-weight: 600;
   cursor: pointer;
 }
+
+.log-panel {
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.log-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.log-title {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.log-lagged {
+  color: var(--warn);
+  font-size: 0.78rem;
+}
+
+.log-follow {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.log-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.log-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #101215;
+}
+
+.log-row {
+  height: 20px;
+  line-height: 20px;
+  padding: 0 0.75rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-line {
+  color: var(--text);
+}
+
+.log-stderr {
+  color: #f0a3a3;
+}
+
+.log-marker {
+  color: var(--text-dim);
+  font-style: italic;
+  text-align: center;
+}
+
+.logs-button {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.logs-button:hover,
+.logs-button-active {
+  color: var(--accent);
+  border-color: var(--accent);
+}

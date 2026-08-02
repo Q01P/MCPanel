@@ -1,3 +1,4 @@
+import { useLogs } from "../logs";
 import { usePanel } from "../store";
 import type { ServerOverview, ServerStatus } from "../types";
 
@@ -19,6 +20,9 @@ function StatusBadge({ status }: { status: ServerStatus }) {
 function ServerRow({ server }: { server: ServerOverview }) {
   const toggle = usePanel((s) => s.toggle);
   const remove = usePanel((s) => s.remove);
+  const selectLogs = useLogs((s) => s.select);
+  const logsOpen = useLogs((s) => s.selected === server.id);
+  const dropLogs = useLogs((s) => s.drop);
 
   const running = server.status.state === "running";
   const busy =
@@ -43,9 +47,19 @@ function ServerRow({ server }: { server: ServerOverview }) {
         <span className="slider" />
       </label>
       <button
+        className={`logs-button${logsOpen ? " logs-button-active" : ""}`}
+        title="Show logs"
+        onClick={() => selectLogs(logsOpen ? null : server.id)}
+      >
+        logs
+      </button>
+      <button
         className="remove-button"
         title="Remove server"
-        onClick={() => void remove(server.id)}
+        onClick={() => {
+          dropLogs(server.id);
+          void remove(server.id);
+        }}
       >
         remove
       </button>

@@ -1,0 +1,89 @@
+import { create } from "zustand";
+import type { AppEvent, LogStreamName } from "./types";
+
+export interface LogEntry {
+  seq: number;
+  kind: "line" | "gap";
+  stream: LogStreamName;
+  text: string;
+}
+
+/** Ring-buffer cap per server — the backend already bounds the flow; this
+ * bounds what the webview retains. */
+export const LOG_CAP = 5000;
+
+let nextSeq = 0;
+let pending: { id: number; entry: LogEntry }[] = [];
+let flushTimer: number | undefined;
+
+interface LogsState {
+  byServer: Record<number, LogEntry[]>;
+  selected: number | null;
+  /** Total events this SSE subscriber missed (gateway `lagged` markers). */
+  laggedMissed: number;
+  select: (id: number | null) => void;
+  drop: (id: number) => void;
+  ingest: (event: AppEvent) => void;
+}
+
+export const useLogs = create<LogsState>((set, get) => ({
+  byServer: {},
+  selected: null,
+  laggedMissed: 0,
+
+  select: (id) => set({ selected: id }),
+
+  drop: (id) => {
+    const { [id]: _dropped, ...rest } = get().byServer;
+    set({
+      byServer: rest,
+      selected: get().selected === id ? null : get().selected,
+    });
+  },
+
+  // Lines arrive at whatever rate servers produce them; appends are batched
+  // on a 100ms timer so the store updates (and re-renders) stay bounded.
+  ingest: (event) => {
+    if (event.type === "lagged") {
+      set({ laggedMissed: get().laggedMissed + event.missed });
+      return;
+    }
+    if (event.type !== "log" && event.type !== "log_gap") return;
+
+    pending.push({
+      id: event.server_id,
+      entry:
+        event.type === "log"
+          ? { seq: nextSeq++, kind: "line", stream: event.stream, text: event.line }
+          : {
+              seq: nextSeq++,
+              kind: "gap",
+              stream: event.stream,
+              text: `· ${event.dropped} ${event.stream} lines dropped under pressure ·`,
+            },
+    });
+
+    if (flushTimer === undefined) {
+      flushTimer = window.setTimeout(() => {
+        flushTimer = undefined;
+        const batch = pending;
+        pending = [];
+        set((state) => {
+          const grouped = new Map<number, LogEntry[]>();
+          for (const { id, entry } of batch) {
+            let bucket = grouped.get(id);
+            if (!bucket) grouped.set(id, (bucket = []));
+            bucket.push(entry);
+          }
+          const byServer = { ...state.byServer };
+          for (const [id, entries] of grouped) {
+            const merged = [...(byServer[id] ?? []), ...entries];
+            byServer[id] =
+              merged.length > LOG_CAP ? merged.slice(merged.length - LOG_CAP) : merged;
+          }
+          return { byServer };
+        });
+      }, 100);
+    }
+  },
+}));
