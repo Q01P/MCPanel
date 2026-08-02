@@ -15,6 +15,12 @@ export const LOG_CAP = 5000;
 let nextSeq = 0;
 let pending: { id: number; entry: LogEntry }[] = [];
 let flushTimer: number | undefined;
+/** Ids whose buckets were dropped. A removed server's final stop events
+ * cross the wire *after* the drop, and in-flight entries sit in `pending` —
+ * without a tombstone either path would silently recreate the bucket and
+ * leak it for the session. Server ids are AUTOINCREMENT and never reused,
+ * so tombstones can be permanent. */
+const dropped = new Set<number>();
 
 /** Test-only: the batching state above outlives the store between test
  * cases; reset it so a pending flush can't leak across tests. */
@@ -23,6 +29,7 @@ export function resetLogBatching() {
   flushTimer = undefined;
   pending = [];
   nextSeq = 0;
+  dropped.clear();
 }
 
 interface LogsState {
@@ -43,7 +50,9 @@ export const useLogs = create<LogsState>((set, get) => ({
   select: (id) => set({ selected: id }),
 
   drop: (id) => {
-    const { [id]: _dropped, ...rest } = get().byServer;
+    dropped.add(id);
+    pending = pending.filter((p) => p.id !== id);
+    const { [id]: _removed, ...rest } = get().byServer;
     set({
       byServer: rest,
       selected: get().selected === id ? null : get().selected,
@@ -58,6 +67,7 @@ export const useLogs = create<LogsState>((set, get) => ({
       return;
     }
     if (event.type !== "log" && event.type !== "log_gap") return;
+    if (dropped.has(event.server_id)) return;
 
     pending.push({
       id: event.server_id,

@@ -3,10 +3,16 @@ import type { ServerOverview } from "./types";
 
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
-  return { ...actual, listServers: vi.fn(async () => []) };
+  return {
+    ...actual,
+    listServers: vi.fn(async () => []),
+    addServer: vi.fn(async () => ({}) as never),
+    removeServer: vi.fn(async () => {}),
+  };
 });
 
 import * as api from "./api";
+import { resetLogBatching, useLogs } from "./logs";
 import { usePanel } from "./store";
 
 const overview = (id: number): ServerOverview => ({
@@ -23,7 +29,12 @@ const overview = (id: number): ServerOverview => ({
 beforeEach(() => {
   vi.useFakeTimers();
   vi.mocked(api.listServers).mockClear();
-  usePanel.setState({ servers: [], loaded: false, error: null });
+  vi.mocked(api.listServers).mockResolvedValue([]);
+  vi.mocked(api.addServer).mockClear();
+  vi.mocked(api.removeServer).mockClear();
+  resetLogBatching();
+  useLogs.setState({ byServer: {}, selected: null, laggedMissed: 0 });
+  usePanel.setState({ servers: [], loaded: false, loadFailed: false, error: null });
 });
 
 afterEach(() => {
@@ -54,6 +65,69 @@ describe("applyEvent", () => {
       line: "noise",
     });
     expect(usePanel.getState().servers[0]?.status).toEqual({ state: "stopped" });
+  });
+});
+
+describe("mutations report success", () => {
+  it("add resolves false and keeps an error when the backend rejects", async () => {
+    vi.mocked(api.addServer).mockRejectedValueOnce({
+      code: "db",
+      message: "name taken",
+    });
+
+    const ok = await usePanel.getState().add({
+      name: "dupe",
+      command: "true",
+      args: [],
+      env: {},
+      cwd: null,
+      auto_start: false,
+    });
+
+    expect(ok).toBe(false);
+    expect(usePanel.getState().error).toBe("name taken");
+  });
+
+  it("remove drops the server's log bucket on success", async () => {
+    useLogs.setState({ byServer: { 7: [] }, selected: 7, laggedMissed: 0 });
+
+    const ok = await usePanel.getState().remove(7);
+
+    expect(ok).toBe(true);
+    expect(useLogs.getState().byServer[7]).toBeUndefined();
+    expect(useLogs.getState().selected).toBeNull();
+  });
+
+  it("remove keeps the log bucket when the backend rejects", async () => {
+    vi.mocked(api.removeServer).mockRejectedValueOnce({
+      code: "db",
+      message: "locked",
+    });
+    useLogs.setState({ byServer: { 7: [] }, selected: 7, laggedMissed: 0 });
+
+    const ok = await usePanel.getState().remove(7);
+
+    expect(ok).toBe(false);
+    expect(useLogs.getState().byServer[7]).toEqual([]);
+  });
+});
+
+describe("load failure", () => {
+  it("is distinguishable from an empty server list", async () => {
+    vi.mocked(api.listServers).mockRejectedValueOnce({
+      code: "db",
+      message: "cannot open database",
+    });
+
+    await usePanel.getState().load();
+
+    expect(usePanel.getState().loaded).toBe(true);
+    expect(usePanel.getState().loadFailed).toBe(true);
+    expect(usePanel.getState().error).toBe("cannot open database");
+
+    // A later successful load clears the failure flag.
+    await usePanel.getState().load();
+    expect(usePanel.getState().loadFailed).toBe(false);
   });
 });
 

@@ -1,6 +1,25 @@
 import { gatewayInfo } from "./api";
 import type { AppEvent } from "./types";
 
+/** Parse an SSE frame defensively: a malformed or truncated frame (or a
+ * backend schema drift) must not throw inside the event listener — the
+ * exception would vanish without reconnecting or surfacing anywhere. */
+export function parseAppEvent(data: string): AppEvent | null {
+  try {
+    const value: unknown = JSON.parse(data);
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      typeof (value as { type?: unknown }).type === "string"
+    ) {
+      return value as AppEvent;
+    }
+  } catch {
+    // fall through to the null below
+  }
+  return null;
+}
+
 /**
  * Subscribe to the gateway's SSE stream. The token travels as a query param
  * because EventSource cannot set headers. Reconnects with a fixed backoff;
@@ -22,10 +41,11 @@ export function connectEvents(
     try {
       const { url, token } = await gatewayInfo();
       if (closed) return;
-      source = new EventSource(`${url}/sse?token=${token}`);
+      source = new EventSource(`${url}/sse?token=${encodeURIComponent(token)}`);
       source.addEventListener("ready", () => onReady?.());
       source.addEventListener("app", (message) => {
-        onEvent(JSON.parse((message as MessageEvent<string>).data) as AppEvent);
+        const event = parseAppEvent((message as MessageEvent<string>).data);
+        if (event) onEvent(event);
       });
       source.onerror = () => {
         source?.close();

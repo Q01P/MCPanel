@@ -12,11 +12,13 @@ export function AddServerForm() {
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
   const [autoStart, setAutoStart] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!name.trim() || !command.trim()) return;
-    await add({
+    if (submitting || !name.trim() || !command.trim()) return;
+    setSubmitting(true);
+    const added = await add({
       name: name.trim(),
       command: command.trim(),
       args: parseArgs(args),
@@ -24,6 +26,10 @@ export function AddServerForm() {
       cwd: null,
       auto_start: autoStart,
     });
+    setSubmitting(false);
+    // On failure the fields keep the user's input for correction; the
+    // store already surfaced the error banner.
+    if (!added) return;
     setName("");
     setCommand("");
     setArgs("");
@@ -59,7 +65,9 @@ export function AddServerForm() {
           />
           auto-start
         </label>
-        <button type="submit">Add</button>
+        <button type="submit" disabled={submitting}>
+          {submitting ? "adding…" : "Add"}
+        </button>
       </div>
     </form>
   );

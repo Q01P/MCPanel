@@ -1,5 +1,18 @@
 import { create } from "zustand";
 import { describeError, gatewayInfo } from "./api";
+import type { GatewayInfo } from "./types";
+
+// The gateway address and token are fixed for the app's lifetime — cache
+// the promise so one invoke serves every send (and concurrent callers);
+// drop it on failure so the next send retries.
+let gateway: Promise<GatewayInfo> | undefined;
+function cachedGatewayInfo(): Promise<GatewayInfo> {
+  gateway ??= gatewayInfo().catch((error: unknown) => {
+    gateway = undefined;
+    throw error;
+  });
+  return gateway;
+}
 
 export interface HistoryEntry {
   seq: number;
@@ -111,7 +124,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
 
     set({ pending: true, response: null });
     try {
-      const { url, token } = await gatewayInfo();
+      const { url, token } = await cachedGatewayInfo();
       const res = await fetch(`${url}/mcp/${serverId}?timeout_s=${timeoutS}`, {
         method: "POST",
         headers: {
@@ -119,6 +132,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
+        // Client-side bound just above the server's own timeout: a dead
+        // gateway or stalled connection must not pin `pending` forever.
+        signal: AbortSignal.timeout((timeoutS + 15) * 1000),
       });
       const text = await res.text();
       let pretty = text;

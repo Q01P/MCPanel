@@ -1,16 +1,21 @@
 import { create } from "zustand";
 import * as api from "./api";
+import { useLogs } from "./logs";
 import type { AppEvent, NewServer, ServerOverview } from "./types";
 
 interface PanelState {
   servers: ServerOverview[];
   loaded: boolean;
+  /** The last full-list fetch failed — distinct from "no servers exist". */
+  loadFailed: boolean;
   error: string | null;
   load: () => Promise<void>;
   resync: () => void;
-  add: (server: NewServer) => Promise<void>;
-  remove: (id: number) => Promise<void>;
-  toggle: (id: number, run: boolean) => Promise<void>;
+  /** Mutations resolve `true` on success so callers can keep user input
+   * (form fields) instead of discarding it on a failed backend call. */
+  add: (server: NewServer) => Promise<boolean>;
+  remove: (id: number) => Promise<boolean>;
+  toggle: (id: number, run: boolean) => Promise<boolean>;
   applyEvent: (event: AppEvent) => void;
   clearError: () => void;
 }
@@ -22,13 +27,14 @@ let resyncTimer: number | undefined;
 export const usePanel = create<PanelState>((set, get) => ({
   servers: [],
   loaded: false,
+  loadFailed: false,
   error: null,
 
   load: async () => {
     try {
-      set({ servers: await api.listServers(), loaded: true });
+      set({ servers: await api.listServers(), loaded: true, loadFailed: false });
     } catch (error) {
-      set({ error: api.describeError(error), loaded: true });
+      set({ error: api.describeError(error), loaded: true, loadFailed: true });
     }
   },
 
@@ -36,17 +42,24 @@ export const usePanel = create<PanelState>((set, get) => ({
     try {
       await api.addServer(server);
       await get().load();
+      return true;
     } catch (error) {
       set({ error: api.describeError(error) });
+      return false;
     }
   },
 
   remove: async (id) => {
     try {
       await api.removeServer(id);
+      // Removal confirmed — retire the log bucket here so every caller
+      // (not just the row button) keeps the two stores consistent.
+      useLogs.getState().drop(id);
       await get().load();
+      return true;
     } catch (error) {
       set({ error: api.describeError(error) });
+      return false;
     }
   },
 
@@ -58,9 +71,11 @@ export const usePanel = create<PanelState>((set, get) => ({
       } else {
         await api.stopServer(id);
       }
+      return true;
     } catch (error) {
       set({ error: api.describeError(error) });
       await get().load();
+      return false;
     }
   },
 

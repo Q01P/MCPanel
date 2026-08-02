@@ -22,7 +22,6 @@ function ServerRow({ server }: { server: ServerOverview }) {
   const remove = usePanel((s) => s.remove);
   const selectLogs = useLogs((s) => s.select);
   const logsOpen = useLogs((s) => s.selected === server.id);
-  const dropLogs = useLogs((s) => s.drop);
 
   const running = server.status.state === "running";
   const busy =
@@ -55,10 +54,7 @@ function ServerRow({ server }: { server: ServerOverview }) {
       <button
         className="remove-button"
         title="Remove server"
-        onClick={() => {
-          dropLogs(server.id);
-          void remove(server.id);
-        }}
+        onClick={() => void remove(server.id)}
       >
         remove
       </button>
@@ -69,8 +65,19 @@ function ServerRow({ server }: { server: ServerOverview }) {
 export function ServerList() {
   const servers = usePanel((s) => s.servers);
   const loaded = usePanel((s) => s.loaded);
+  const loadFailed = usePanel((s) => s.loadFailed);
+  const load = usePanel((s) => s.load);
 
   if (!loaded) return <p className="empty">loading…</p>;
+  // A failed fetch with nothing cached must not read as "you have no
+  // servers" — that's a lie about the user's data.
+  if (loadFailed && servers.length === 0)
+    return (
+      <p className="empty">
+        Couldn't load the server list.{" "}
+        <button onClick={() => void load()}>retry</button>
+      </p>
+    );
   if (servers.length === 0)
     return <p className="empty">No servers configured yet — add one below.</p>;
 
