@@ -137,6 +137,14 @@ async fn crash_is_reported_as_errored() {
     if let ServerStatus::Errored { message } = state.status(id) {
         assert!(message.contains("unexpectedly"), "got: {message}");
     }
+
+    // The crash cleared the runtime — no stale handles to a dead process.
+    assert!(state.runtime(id).is_none(), "no runtime after a crash");
+
+    // And stop resets the Errored entry to Stopped instead of signalling
+    // the dead child's (possibly recycled) process group.
+    lifecycle::stop(&state, id).await.expect("stop crashed server");
+    assert_eq!(state.status(id), ServerStatus::Stopped);
 }
 
 #[tokio::test]

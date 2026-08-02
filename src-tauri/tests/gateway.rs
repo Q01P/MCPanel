@@ -13,7 +13,7 @@ use tower::ServiceExt;
 use mcpanel_lib::commands::lifecycle;
 use mcpanel_lib::db::{self, NewServer};
 use mcpanel_lib::server::{AuthToken, Gateway, router};
-use mcpanel_lib::state::AppState;
+use mcpanel_lib::state::{AppState, ServerStatus};
 
 async fn body_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
@@ -96,6 +96,49 @@ async fn forwards_jsonrpc_to_a_running_server() {
     // Stopped server → 404 on the same route.
     let response = router(gateway.clone())
         .oneshot(post(&gateway, id, json!({"id":9,"method":"ping"})))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+/// A crashed server must 404 like a stopped one — not forward to the dead
+/// child's stdin through a stale runtime.
+#[tokio::test]
+async fn crashed_server_returns_not_found() {
+    let gateway = Gateway {
+        token: AuthToken::generate(),
+        app: AppState::new(db::open_in_memory().expect("db")),
+        host: TEST_HOST.into(),
+    };
+
+    let id = lifecycle::add(
+        &gateway.app,
+        NewServer {
+            name: "gw-crash".into(),
+            command: env!("CARGO_BIN_EXE_mock-mcp-server").into(),
+            args: vec![],
+            env: BTreeMap::new(),
+            cwd: None,
+            auto_start: false,
+        },
+    )
+    .await
+    .expect("add")
+    .id;
+    lifecycle::start(&gateway.app, id).await.expect("start");
+
+    let pid = gateway.app.runtime(id).expect("runtime").pid as i32;
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+    for _ in 0..100 {
+        if matches!(gateway.app.status(id), ServerStatus::Errored { .. }) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(matches!(gateway.app.status(id), ServerStatus::Errored { .. }));
+
+    let response = router(gateway.clone())
+        .oneshot(post(&gateway, id, json!({"id":1,"method":"ping"})))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);

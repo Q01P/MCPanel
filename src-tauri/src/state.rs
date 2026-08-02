@@ -69,10 +69,11 @@ fn serialize_arc_str<S: Serializer>(line: &Arc<str>, serializer: S) -> Result<S:
     serializer.serialize_str(line)
 }
 
-/// Registry entry for a managed server; `runtime` is present from the
-/// moment the handshake succeeds until the exit waiter observes death,
-/// `start` from `try_begin_start` until the runtime is installed (or the
-/// start settles without one).
+/// Registry entry for a managed server; `runtime` is present exactly while
+/// the status is `Running` — installed when the handshake succeeds, cleared
+/// by the first non-`Running` status write (crash included) — and `start`
+/// from `try_begin_start` until the runtime is installed (or the start
+/// settles without one).
 pub struct ServerEntry {
     pub status: ServerStatus,
     pub runtime: Option<RunningServer>,
@@ -172,14 +173,22 @@ impl AppState {
     }
 
     /// Update the registry and broadcast the change to the UI. `Stopped`
-    /// removes the entry so the registry only holds live servers.
+    /// removes the entry so the registry only holds live servers; any other
+    /// non-`Running` status drops the runtime, so a crashed server's stale
+    /// handles can't be reached through `runtime()` (`Running` itself is only
+    /// ever set atomically by [`Self::try_install_runtime`]).
     pub fn set_status(&self, id: ServerId, status: ServerStatus) {
         if status == ServerStatus::Stopped {
             self.registry.remove(&id);
         } else {
             self.registry
                 .entry(id)
-                .and_modify(|entry| entry.status = status.clone())
+                .and_modify(|entry| {
+                    entry.status = status.clone();
+                    if status != ServerStatus::Running {
+                        entry.runtime = None;
+                    }
+                })
                 .or_insert_with(|| ServerEntry {
                     status: status.clone(),
                     runtime: None,
