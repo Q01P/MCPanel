@@ -20,6 +20,12 @@ pub enum AppError {
     #[error("unauthorized")]
     Unauthorized,
 
+    #[error("server RPC error {code}: {message}")]
+    Rpc { code: i64, message: String },
+
+    #[error("server connection closed")]
+    ConnectionClosed,
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -39,6 +45,8 @@ impl AppError {
             Self::Handshake(_) => "handshake",
             Self::Timeout(_) => "timeout",
             Self::Unauthorized => "unauthorized",
+            Self::Rpc { .. } => "rpc",
+            Self::ConnectionClosed => "connection_closed",
             Self::Io(_) => "io",
             Self::Db(_) => "db",
             Self::Json(_) => "json",
@@ -51,7 +59,9 @@ impl AppError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             // The child MCP server is the gateway's upstream.
             Self::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
-            Self::Handshake(_) => StatusCode::BAD_GATEWAY,
+            Self::Handshake(_) | Self::Rpc { .. } | Self::ConnectionClosed => {
+                StatusCode::BAD_GATEWAY
+            }
             Self::Json(_) => StatusCode::BAD_REQUEST,
             Self::Io(_) | Self::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }

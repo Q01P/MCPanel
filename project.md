@@ -205,9 +205,8 @@ tasks** — do not scaffold ahead of the agreed task.
       + orphan tests
 - [x] **T4** — `mcp/stream.rs`: line pipelines (capped custom codec), ANSI
       strip, bounded channels
-- [ ] **T5** — `mcp/protocol.rs`: JSON-RPC correlation + initialize handshake
-      ← **next**
-- [ ] **T6** — `db/`: rusqlite store, migrations, server CRUD
+- [x] **T5** — `mcp/protocol.rs`: JSON-RPC correlation + initialize handshake
+- [ ] **T6** — `db/`: rusqlite store, migrations, server CRUD  ← **next**
 - [ ] **T7** — `commands/`: Tauri IPC (list/add/update/remove/start/stop)
 - [ ] **T8** — `server/`: full gateway (`/sse`, `/mcp/{server_id}`, timeouts)
 - [ ] **T9** — Secrets: keyring integration, just-in-time resolution, redaction

@@ -70,42 +70,73 @@ async fn pump<R: AsyncRead + Unpin + Send + 'static>(
     tx: mpsc::Sender<StreamEvent>,
 ) {
     let mut frames = FramedRead::new(reader, CappedLines::default());
-    let mut dropped: u64 = 0;
+    let mut forwarder = BoundedForwarder::new(tx);
 
     while let Some(item) = frames.next().await {
         match item {
             Ok(RawLine::Line(raw)) => {
                 let line: Arc<str> = Arc::from(strip_ansi(&raw).as_ref());
-                // Flush the pending drop marker first so ordering in the UI
-                // is faithful: [lines] [gap marker] [lines].
-                if dropped > 0 {
-                    match tx.try_send(StreamEvent::Dropped(dropped)) {
-                        Ok(()) => dropped = 0,
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            dropped += 1;
-                            continue;
-                        }
-                        Err(mpsc::error::TrySendError::Closed(_)) => return,
-                    }
-                }
-                match tx.try_send(StreamEvent::Line(line)) {
-                    Ok(()) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) => dropped += 1,
-                    Err(mpsc::error::TrySendError::Closed(_)) => return,
+                if !forwarder.offer(line) {
+                    return; // receiver gone
                 }
             }
             Ok(RawLine::Oversized) => {
                 debug!(target: "app::stream", "line exceeded {MAX_LINE_LENGTH} bytes, discarded");
-                dropped += 1;
+                forwarder.lose(1);
             }
             Err(_) => break, // pipe error — stream is gone
         }
     }
+    forwarder.finish().await;
+}
 
-    if dropped > 0 {
-        // EOF: the pump is done, so a blocking send is fine — the marker
-        // arrives as soon as the receiver drains.
-        let _ = tx.send(StreamEvent::Dropped(dropped)).await;
+/// Non-blocking delivery with faithful drop accounting: a pending gap marker
+/// is flushed before the next line so ordering in the UI is
+/// [lines] [gap marker] [lines]; anything lost is counted, never silently
+/// vanished. Shared by the stream pumps and the protocol router (T5).
+pub(crate) struct BoundedForwarder {
+    tx: mpsc::Sender<StreamEvent>,
+    lost: u64,
+}
+
+impl BoundedForwarder {
+    pub(crate) fn new(tx: mpsc::Sender<StreamEvent>) -> Self {
+        Self { tx, lost: 0 }
+    }
+
+    pub(crate) fn lose(&mut self, n: u64) {
+        self.lost += n;
+    }
+
+    /// Deliver a line without awaiting channel space; returns false when the
+    /// receiver is gone.
+    pub(crate) fn offer(&mut self, line: Arc<str>) -> bool {
+        if self.lost > 0 {
+            match self.tx.try_send(StreamEvent::Dropped(self.lost)) {
+                Ok(()) => self.lost = 0,
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    self.lost += 1; // no room for the marker → this line joins the gap
+                    return true;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => return false,
+            }
+        }
+        match self.tx.try_send(StreamEvent::Line(line)) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.lost += 1;
+                true
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
+    }
+
+    /// EOF: the producer is done, so a blocking send is fine — the final
+    /// marker arrives as soon as the receiver drains.
+    pub(crate) async fn finish(self) {
+        if self.lost > 0 {
+            let _ = self.tx.send(StreamEvent::Dropped(self.lost)).await;
+        }
     }
 }
 
