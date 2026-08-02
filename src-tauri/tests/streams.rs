@@ -3,19 +3,10 @@
 
 #![cfg(unix)]
 
-use mcpanel_lib::mcp::process::{ManagedChild, ProcessConfig, spawn};
-use mcpanel_lib::mcp::stream::{CHANNEL_CAPACITY, ChildStreams, StreamEvent, attach};
+mod common;
 
-fn spawn_fixture(args: &[&str]) -> (ManagedChild, ChildStreams) {
-    let mut managed = spawn(&ProcessConfig {
-        command: env!("CARGO_BIN_EXE_mock-mcp-server").to_string(),
-        args: args.iter().map(|a| a.to_string()).collect(),
-        ..Default::default()
-    })
-    .expect("spawn fixture");
-    let streams = attach(&mut managed.child).expect("attach streams");
-    (managed, streams)
-}
+use common::spawn_fixture;
+use mcpanel_lib::mcp::stream::{CHANNEL_CAPACITY, StreamEvent};
 
 async fn next_line(rx: &mut tokio::sync::mpsc::Receiver<StreamEvent>) -> String {
     loop {
@@ -59,8 +50,18 @@ async fn stdout_garbage_bytes_are_stripped() {
 async fn flooding_server_is_bounded_not_buffered() {
     let (mut managed, mut streams) = spawn_fixture(&["--spam"]);
 
-    // Let it flood without draining; the channel must absorb the pressure.
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // Let it flood without draining until the channel is genuinely full (a
+    // fixed sleep flakes on starved runners), then one beat more so at least
+    // one further send fails and is counted as dropped.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while streams.stdout.len() < streams.stdout.max_capacity() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "spam never filled the channel"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     managed.kill.kill_now();
     managed.child.wait().await.expect("reap");
 

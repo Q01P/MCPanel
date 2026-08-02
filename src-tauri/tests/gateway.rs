@@ -3,17 +3,17 @@
 
 #![cfg(unix)]
 
-use std::collections::BTreeMap;
+mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use common::{TEST_HOST, add_fixture, test_gateway, wait_for};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use mcpanel_lib::commands::lifecycle;
-use mcpanel_lib::db::{self, NewServer};
-use mcpanel_lib::server::{AuthToken, Gateway, router};
-use mcpanel_lib::state::{AppState, ServerStatus};
+use mcpanel_lib::server::{Gateway, router};
+use mcpanel_lib::state::ServerStatus;
 
 async fn body_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
@@ -21,8 +21,6 @@ async fn body_json(response: axum::response::Response) -> Value {
         .expect("read body");
     serde_json::from_slice(&bytes).expect("json body")
 }
-
-const TEST_HOST: &str = "127.0.0.1:4321";
 
 fn post(gateway: &Gateway, server_id: i64, payload: Value) -> Request<Body> {
     Request::builder()
@@ -40,26 +38,8 @@ fn post(gateway: &Gateway, server_id: i64, payload: Value) -> Request<Body> {
 
 #[tokio::test]
 async fn forwards_jsonrpc_to_a_running_server() {
-    let gateway = Gateway {
-        token: AuthToken::generate(),
-        app: AppState::new(db::open_in_memory().expect("db")),
-        host: TEST_HOST.into(),
-    };
-
-    let id = lifecycle::add(
-        &gateway.app,
-        NewServer {
-            name: "gw".into(),
-            command: env!("CARGO_BIN_EXE_mock-mcp-server").into(),
-            args: vec![],
-            env: BTreeMap::new(),
-            cwd: None,
-            auto_start: false,
-        },
-    )
-    .await
-    .expect("add")
-    .id;
+    let gateway = test_gateway();
+    let id = add_fixture(&gateway.app, "gw", &[]).await;
     lifecycle::start(&gateway.app, id).await.expect("start");
 
     // Request: caller id echoed, result forwarded.
@@ -105,37 +85,16 @@ async fn forwards_jsonrpc_to_a_running_server() {
 /// child's stdin through a stale runtime.
 #[tokio::test]
 async fn crashed_server_returns_not_found() {
-    let gateway = Gateway {
-        token: AuthToken::generate(),
-        app: AppState::new(db::open_in_memory().expect("db")),
-        host: TEST_HOST.into(),
-    };
-
-    let id = lifecycle::add(
-        &gateway.app,
-        NewServer {
-            name: "gw-crash".into(),
-            command: env!("CARGO_BIN_EXE_mock-mcp-server").into(),
-            args: vec![],
-            env: BTreeMap::new(),
-            cwd: None,
-            auto_start: false,
-        },
-    )
-    .await
-    .expect("add")
-    .id;
+    let gateway = test_gateway();
+    let id = add_fixture(&gateway.app, "gw-crash", &[]).await;
     lifecycle::start(&gateway.app, id).await.expect("start");
 
     let pid = gateway.app.runtime(id).expect("runtime").pid as i32;
     unsafe { libc::kill(pid, libc::SIGKILL) };
-    for _ in 0..100 {
-        if matches!(gateway.app.status(id), ServerStatus::Errored { .. }) {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    assert!(matches!(gateway.app.status(id), ServerStatus::Errored { .. }));
+    wait_for("Errored status", || {
+        matches!(gateway.app.status(id), ServerStatus::Errored { .. })
+    })
+    .await;
 
     let response = router(gateway.clone())
         .oneshot(post(&gateway, id, json!({"id":1,"method":"ping"})))

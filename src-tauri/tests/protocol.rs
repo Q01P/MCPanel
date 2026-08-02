@@ -8,27 +8,16 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use mcpanel_lib::error::AppError;
-use mcpanel_lib::mcp::process::{ManagedChild, ProcessConfig, spawn};
-use mcpanel_lib::mcp::protocol::{NotificationEvent, PROTOCOL_VERSION, ProtocolHandle, connect};
-use mcpanel_lib::mcp::stream::{StreamEvent, attach};
+mod common;
 
-fn spawn_connected(args: &[&str]) -> (ManagedChild, ProtocolHandle) {
-    let mut managed = spawn(&ProcessConfig {
-        command: env!("CARGO_BIN_EXE_mock-mcp-server").to_string(),
-        args: args.iter().map(|a| a.to_string()).collect(),
-        ..Default::default()
-    })
-    .expect("spawn fixture");
-    let streams = attach(&mut managed.child).expect("attach streams");
-    let stdin = managed.child.stdin.take().expect("piped stdin");
-    let handle = connect(stdin, streams.stdout, Duration::from_millis(500));
-    (managed, handle)
-}
+use common::{HAPPY_TIMEOUT, spawn_connected};
+use mcpanel_lib::error::AppError;
+use mcpanel_lib::mcp::protocol::{NotificationEvent, PROTOCOL_VERSION};
+use mcpanel_lib::mcp::stream::StreamEvent;
 
 #[tokio::test]
 async fn handshake_happy_path_then_requests() {
-    let (mut managed, handle) = spawn_connected(&[]);
+    let (mut managed, handle, _stderr) = spawn_connected(&[], HAPPY_TIMEOUT);
 
     let hs = handle.client.handshake().await.expect("handshake");
     assert_eq!(hs.protocol_version, PROTOCOL_VERSION);
@@ -50,7 +39,9 @@ async fn handshake_happy_path_then_requests() {
 
 #[tokio::test]
 async fn handshake_timeout_with_unresponsive_server() {
-    let (mut managed, handle) = spawn_connected(&["--no-handshake"]);
+    // A short bound: this handshake is *supposed* to time out.
+    let (mut managed, handle, _stderr) =
+        spawn_connected(&["--no-handshake"], Duration::from_millis(500));
 
     let err = handle.client.handshake().await.expect_err("must time out");
     assert!(
@@ -66,7 +57,7 @@ async fn handshake_timeout_with_unresponsive_server() {
 
 #[tokio::test]
 async fn jsonrpc_errors_surface_as_rpc_variant() {
-    let (mut managed, handle) = spawn_connected(&[]);
+    let (mut managed, handle, _stderr) = spawn_connected(&[], HAPPY_TIMEOUT);
     handle.client.handshake().await.expect("handshake");
 
     let err = handle
@@ -84,7 +75,7 @@ async fn jsonrpc_errors_surface_as_rpc_variant() {
 
 #[tokio::test]
 async fn requests_fail_cleanly_after_stop() {
-    let (mut managed, handle) = spawn_connected(&[]);
+    let (mut managed, handle, _stderr) = spawn_connected(&[], HAPPY_TIMEOUT);
     handle.client.handshake().await.expect("handshake");
 
     managed.shutdown().await.expect("shutdown");
@@ -103,7 +94,7 @@ async fn requests_fail_cleanly_after_stop() {
 
 #[tokio::test]
 async fn server_notifications_fan_out() {
-    let (mut managed, mut handle) = spawn_connected(&["--notify"]);
+    let (mut managed, mut handle, _stderr) = spawn_connected(&["--notify"], HAPPY_TIMEOUT);
     handle.client.handshake().await.expect("handshake");
 
     let notification = tokio::time::timeout(Duration::from_secs(2), handle.notifications.recv())
@@ -123,16 +114,7 @@ async fn server_notifications_fan_out() {
 /// get `-32601` back. The fixture confirms the pong on stderr.
 #[tokio::test]
 async fn server_initiated_ping_gets_empty_result() {
-    let mut managed = spawn(&ProcessConfig {
-        command: env!("CARGO_BIN_EXE_mock-mcp-server").to_string(),
-        args: vec!["--ping-client".into()],
-        ..Default::default()
-    })
-    .expect("spawn fixture");
-    let streams = attach(&mut managed.child).expect("attach streams");
-    let stdin = managed.child.stdin.take().expect("piped stdin");
-    let mut stderr = streams.stderr;
-    let handle = connect(stdin, streams.stdout, Duration::from_millis(500));
+    let (mut managed, handle, mut stderr) = spawn_connected(&["--ping-client"], HAPPY_TIMEOUT);
 
     handle.client.handshake().await.expect("handshake");
 
@@ -156,7 +138,7 @@ async fn server_initiated_ping_gets_empty_result() {
 /// (spec behavior), not silently accepted.
 #[tokio::test]
 async fn handshake_rejects_unsupported_protocol_version() {
-    let (mut managed, handle) = spawn_connected(&["--wrong-version"]);
+    let (mut managed, handle, _stderr) = spawn_connected(&["--wrong-version"], HAPPY_TIMEOUT);
 
     let err = handle.client.handshake().await.expect_err("must reject");
     assert!(
@@ -173,11 +155,22 @@ async fn handshake_rejects_unsupported_protocol_version() {
 /// server sent.
 #[tokio::test]
 async fn notification_overflow_is_surfaced_as_gap() {
-    let (mut managed, mut handle) = spawn_connected(&["--notify-flood"]);
+    let (mut managed, mut handle, _stderr) =
+        spawn_connected(&["--notify-flood"], HAPPY_TIMEOUT);
     handle.client.handshake().await.expect("handshake");
 
-    // Let the router chew through the whole flood while nobody drains.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Let the router flood the advisory channel while nobody drains: poll
+    // until it is genuinely full (a fixed sleep flakes on starved runners),
+    // then give the router a beat to burn its remaining sends into gaps.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while handle.notifications.len() < handle.notifications.max_capacity() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "flood never filled the advisory channel"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let mut frames = 0u64;
     let mut gaps = 0u64;
@@ -208,7 +201,7 @@ async fn notification_overflow_is_surfaced_as_gap() {
 
 #[tokio::test]
 async fn garbage_stdout_falls_back_to_logs_while_protocol_works() {
-    let (mut managed, mut handle) = spawn_connected(&["--garbage"]);
+    let (mut managed, mut handle, _stderr) = spawn_connected(&["--garbage"], HAPPY_TIMEOUT);
 
     // Handshake succeeds despite the junk printed before serving…
     handle.client.handshake().await.expect("handshake");

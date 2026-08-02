@@ -9,8 +9,11 @@
 
 #![cfg(unix)]
 
+mod common;
+
 use std::collections::BTreeMap;
 
+use common::test_state;
 use mcpanel_lib::commands::lifecycle;
 use mcpanel_lib::db::{self, EnvValue, NewServer, ServerRecord};
 use mcpanel_lib::error::AppError;
@@ -27,10 +30,6 @@ fn store_available() -> bool {
         }
         Err(_) => false,
     }
-}
-
-fn test_state() -> AppState {
-    AppState::new(db::open_in_memory().expect("in-memory db"))
 }
 
 async fn add_with_secret_marker(state: &AppState, name: &str, key: &str) -> ServerRecord {

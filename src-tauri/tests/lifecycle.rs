@@ -3,65 +3,15 @@
 
 #![cfg(unix)]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use common::{add_fixture, add_fixture_auto, alive, test_state, wait_for};
 use mcpanel_lib::commands::lifecycle;
-use mcpanel_lib::db::{self, NewServer};
-use mcpanel_lib::state::{AppEvent, AppState, LogStream, ServerId, ServerStatus};
-
-fn test_state() -> AppState {
-    AppState::new(db::open_in_memory().expect("in-memory db"))
-}
-
-async fn add_fixture(state: &AppState, name: &str, args: &[&str]) -> ServerId {
-    add_fixture_auto(state, name, args, false).await
-}
-
-async fn add_fixture_auto(
-    state: &AppState,
-    name: &str,
-    args: &[&str],
-    auto_start: bool,
-) -> ServerId {
-    lifecycle::add(
-        state,
-        NewServer {
-            name: name.into(),
-            command: env!("CARGO_BIN_EXE_mock-mcp-server").into(),
-            args: args.iter().map(|a| a.to_string()).collect(),
-            env: BTreeMap::new(),
-            cwd: None,
-            auto_start,
-        },
-    )
-    .await
-    .expect("insert server")
-    .id
-}
-
-fn alive(pid: i32) -> bool {
-    if unsafe { libc::kill(pid, 0) } != 0 {
-        return false;
-    }
-    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-        return false;
-    };
-    let state = stat
-        .rfind(')')
-        .and_then(|i| stat[i + 1..].trim_start().chars().next());
-    !matches!(state, Some('Z') | Some('X') | None)
-}
-
-async fn wait_for<F: Fn() -> bool>(what: &str, cond: F) {
-    for _ in 0..100 {
-        if cond() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("timed out waiting for {what}");
-}
+use mcpanel_lib::db::NewServer;
+use mcpanel_lib::state::{AppEvent, LogStream, ServerId, ServerStatus};
 
 #[tokio::test]
 async fn full_lifecycle_walks_the_state_machine() {
@@ -370,12 +320,19 @@ async fn concurrent_start_and_remove_settle_clean() {
     }
 
     // Any grandchild whose pid made it into the log stream must be dead.
+    // Lagging must not end the drain early — that would silently skip every
+    // pid check below (`try_recv` reports a lag as `Err`).
     let mut grandchildren = Vec::new();
-    while let Ok(event) = events.try_recv() {
-        if let AppEvent::Log { stream: LogStream::Stdout, line, .. } = event {
-            if let Ok(pid) = line.trim().parse::<i32>() {
-                grandchildren.push(pid);
+    loop {
+        match events.try_recv() {
+            Ok(AppEvent::Log { stream: LogStream::Stdout, line, .. }) => {
+                if let Ok(pid) = line.trim().parse::<i32>() {
+                    grandchildren.push(pid);
+                }
             }
+            Ok(_) => {}
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+            Err(_) => break,
         }
     }
     for pid in grandchildren {
