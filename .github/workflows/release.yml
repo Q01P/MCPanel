@@ -5,7 +5,43 @@ on:
     tags: ["v*"]
 
 jobs:
+  # A tag can point anywhere — never draft artifacts from unverified code.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
   build:
+    needs: check
     permissions:
       contents: write
     strategy:
@@ -15,12 +51,15 @@ jobs:
           - os: ubuntu-latest
           - os: macos-latest
             args: --target aarch64-apple-darwin
+            rust-targets: aarch64-apple-darwin
           - os: macos-latest
             args: --target x86_64-apple-darwin
+            rust-targets: x86_64-apple-darwin
           - os: windows-latest
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -29,20 +68,26 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
 
+      # Extra targets only where they're used (the macOS legs cross-compile).
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.rust-targets }}
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
       - run: npm ci
+
+      # tauri-action doesn't take cargo flags; a fetch --locked beforehand
+      # fails the leg if Cargo.lock disagrees with the manifests.
+      - name: Enforce lockfile
+        run: cargo fetch --locked --manifest-path src-tauri/Cargo.toml
 
       - uses: tauri-apps/tauri-action@v0
         env:

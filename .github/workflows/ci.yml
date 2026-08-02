@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Rapid pushes shouldn't stack redundant 3-OS matrices.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -15,8 +20,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -25,7 +31,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -41,22 +47,65 @@ jobs:
           npm ci
           npm run build
 
+      - name: Format check
+        if: runner.os == 'Linux'
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      # --locked everywhere: the committed Cargo.lock is the effective
+      # dependency pin — a resolver update must never change what CI builds.
       - name: Clippy (deny warnings)
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       # Debug profile on purpose: the release profile's panic = "abort"
       # breaks #[should_panic]-style tests.
       - name: Tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
+      # One leg is enough for the size budget; the debug test build above
+      # already compiles every platform's code.
       - name: Release build
-        run: cargo build --release --manifest-path src-tauri/Cargo.toml
+        if: runner.os == 'Linux'
+        run: cargo build --release --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Size budget (< 15 MB)
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           bin="src-tauri/target/release/mcpanel"
-          [ -f "$bin.exe" ] && bin="$bin.exe"
           size=$(wc -c < "$bin")
           echo "release binary: $size bytes ($(( size / 1024 / 1024 )) MB)"
+          echo "release binary: $(( size / 1024 )) KiB of 15360 KiB budget" >> "$GITHUB_STEP_SUMMARY"
           [ "$size" -lt 15728640 ] || { echo "size budget exceeded"; exit 1; }
+
+  # rust-version = "1.85" is declared in Cargo.toml; build it or it drifts.
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@1.85
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # generate_context! needs dist/ and icons at compile time.
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Check on MSRV
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
