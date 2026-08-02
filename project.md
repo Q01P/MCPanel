@@ -210,10 +210,9 @@ tasks** — do not scaffold ahead of the agreed task.
 - [x] **T7** — `commands/`: Tauri IPC (list/add/update/remove/start/stop)
 - [x] **T8** — `server/`: full gateway (`/sse`, `/mcp/{server_id}`, timeouts)
 - [x] **T9** — Secrets: keyring integration, just-in-time resolution, redaction
-- [ ] **T10** — Frontend: Vite scaffold, server list + toggles + status badges
-      ← **next**
+- [x] **T10** — Frontend: Vite scaffold, server list + toggles + status badges
 - [ ] **T11** — Frontend: virtualized log viewer (follow-tail, dropped-lines
-      marker)
+      marker)  ← **next**
 - [ ] **T12** — Frontend: JSON workbench (CodeMirror 6, templates, history)
 - [ ] **T13** — Packaging: bundling on, icons, CI (3-OS matrix), release
       workflow, size budget check

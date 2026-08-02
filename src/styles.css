@@ -1,0 +1,241 @@
+:root {
+  color-scheme: dark;
+  --bg: #14161a;
+  --surface: #1d2026;
+  --surface-raised: #262a32;
+  --border: #32363f;
+  --text: #e6e8eb;
+  --text-dim: #9aa0aa;
+  --accent: #3b5bdb;
+  --ok: #2f9e44;
+  --warn: #e8a33d;
+  --err: #e03131;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.panel {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.panel-header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  letter-spacing: 0.02em;
+}
+
+.tagline {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.error-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: color-mix(in srgb, var(--err) 18%, var(--surface));
+  border: 1px solid var(--err);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.error-banner button {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.empty {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.server-list {
+  list-style: none;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.server-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+}
+
+.server-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.server-name {
+  font-weight: 600;
+}
+
+.server-command {
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.badge-running {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.badge-starting,
+.badge-initializing {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.badge-errored {
+  color: var(--err);
+  border-color: var(--err);
+  cursor: help;
+}
+
+.switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: background 0.15s;
+  cursor: pointer;
+}
+
+.slider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  transition: transform 0.15s, background 0.15s;
+}
+
+.switch input:checked + .slider {
+  background: color-mix(in srgb, var(--accent) 55%, var(--surface));
+}
+
+.switch input:checked + .slider::before {
+  transform: translateX(18px);
+  background: var(--text);
+}
+
+.switch-busy .slider {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.remove-button {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.remove-button:hover {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.add-form h2 {
+  font-size: 1rem;
+  margin: 0 0 0.6rem;
+}
+
+.add-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr auto;
+  gap: 0.5rem;
+}
+
+.add-fields input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.add-fields input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.add-fields button {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  padding: 0.45rem 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}

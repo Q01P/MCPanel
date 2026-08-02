@@ -28,8 +28,10 @@ pub fn run() {
             let app_state = state::AppState::new(conn);
             app.manage(app_state.clone());
 
+            let token = server::AuthToken::generate();
+            app.manage(token.clone());
             tauri::async_runtime::spawn(server::serve(server::Gateway {
-                token: server::AuthToken::generate(),
+                token,
                 app: app_state,
             }));
             info!(target: "app", "MCPanel starting; gateway spawning on {}", server::GATEWAY_ADDR);
@@ -44,6 +46,7 @@ pub fn run() {
             commands::stop_server,
             commands::set_server_secret,
             commands::delete_server_secret,
+            commands::gateway_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MCPanel");

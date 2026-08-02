@@ -1,0 +1,56 @@
+import { type FormEvent, useState } from "react";
+import { usePanel } from "../store";
+
+/** Naive whitespace split — quoting support can come with the workbench. */
+function parseArgs(raw: string): string[] {
+  return raw.trim().length === 0 ? [] : raw.trim().split(/\s+/);
+}
+
+export function AddServerForm() {
+  const add = usePanel((s) => s.add);
+  const [name, setName] = useState("");
+  const [command, setCommand] = useState("");
+  const [args, setArgs] = useState("");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!name.trim() || !command.trim()) return;
+    await add({
+      name: name.trim(),
+      command: command.trim(),
+      args: parseArgs(args),
+      env: {},
+      cwd: null,
+      auto_start: false,
+    });
+    setName("");
+    setCommand("");
+    setArgs("");
+  };
+
+  return (
+    <form className="add-form" onSubmit={(e) => void submit(e)}>
+      <h2>Add server</h2>
+      <div className="add-fields">
+        <input
+          placeholder="name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+        <input
+          placeholder="command (e.g. npx)"
+          value={command}
+          onChange={(e) => setCommand(e.target.value)}
+          required
+        />
+        <input
+          placeholder="args (e.g. -y some-mcp-server)"
+          value={args}
+          onChange={(e) => setArgs(e.target.value)}
+        />
+        <button type="submit">Add</button>
+      </div>
+    </form>
+  );
+}

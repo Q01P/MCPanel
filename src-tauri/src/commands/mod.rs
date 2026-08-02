@@ -60,6 +60,26 @@ pub async fn stop_server(state: State<'_, AppState>, id: ServerId) -> AppResult<
     lifecycle::stop(&state, id).await
 }
 
+/// How the webview reaches the gateway; the token is handed over IPC only —
+/// never logged, never persisted.
+#[derive(serde::Serialize)]
+pub struct GatewayInfo {
+    pub url: String,
+    pub token: String,
+}
+
+#[tauri::command]
+#[tracing::instrument(target = "app::commands", skip(token))]
+pub async fn gateway_info(
+    token: State<'_, crate::server::AuthToken>,
+) -> AppResult<GatewayInfo> {
+    info!(target: "app::commands", "gateway_info");
+    Ok(GatewayInfo {
+        url: format!("http://{}", crate::server::GATEWAY_ADDR),
+        token: token.expose().to_string(),
+    })
+}
+
 // Secret values are redacted by construction: never logged (key only,
 // `skip(value)`), never echoed back, never written to the DB.
 
