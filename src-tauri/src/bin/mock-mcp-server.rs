@@ -2,13 +2,17 @@
 //! failure-mode flags (spec §4).
 //!
 //! Default: answers `initialize`, `tools/list`, `ping`; exits on stdin EOF.
-//! `--spam`         floods stdout as fast as possible
-//! `--spawn-child`  spawns an idle grandchild, prints its pid
-//! `--no-handshake` never answers `initialize`
-//! `--garbage`      prints non-JSON to stdout before serving
-//! `--ansi`         ANSI-colored stderr
-//! `--notify`       emits a notification after `initialized`
-//! `--idle`         (internal) sleep forever — the grandchild mode
+//! `--spam`          floods stdout as fast as possible
+//! `--spawn-child`   spawns an idle grandchild, prints its pid
+//! `--no-handshake`  never answers `initialize`
+//! `--wrong-version` answers `initialize` with a bogus protocolVersion
+//! `--garbage`       prints non-JSON to stdout before serving
+//! `--ansi`          ANSI-colored stderr
+//! `--notify`        emits a notification after `initialized`
+//! `--notify-flood`  emits 400 notifications after `initialized`
+//! `--ping-client`   sends a server→client ping after `initialized`; prints
+//!                   "client answered ping" to stderr on an empty result
+//! `--idle`          (internal) sleep forever — the grandchild mode
 
 use std::io::{BufRead, Write};
 
@@ -57,7 +61,21 @@ fn main() {
         }
     }
 
-    serve(has("--no-handshake"), has("--notify"));
+    serve(Flags {
+        no_handshake: has("--no-handshake"),
+        wrong_version: has("--wrong-version"),
+        notify: has("--notify"),
+        notify_flood: has("--notify-flood"),
+        ping_client: has("--ping-client"),
+    });
+}
+
+struct Flags {
+    no_handshake: bool,
+    wrong_version: bool,
+    notify: bool,
+    notify_flood: bool,
+    ping_client: bool,
 }
 
 fn respond(id: &serde_json::Value, result: serde_json::Value) {
@@ -72,14 +90,14 @@ fn respond(id: &serde_json::Value, result: serde_json::Value) {
     lock.flush().expect("flush response");
 }
 
-fn serve(no_handshake: bool, notify: bool) {
+fn serve(flags: Flags) {
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { return };
         if line.trim().is_empty() {
             continue;
         }
-        if no_handshake {
+        if flags.no_handshake {
             continue; // read forever, answer nothing
         }
         let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
@@ -91,17 +109,44 @@ fn serve(no_handshake: bool, notify: bool) {
             .and_then(|m| m.as_str())
             .unwrap_or_default();
 
+        // The pong for our own server→client ping (string id, no method).
+        if method.is_empty() && message.get("result").is_some() {
+            if message.get("id").and_then(|i| i.as_str()) == Some("srv-ping-1") {
+                eprintln!("client answered ping");
+            }
+            continue;
+        }
+
         match (method, id) {
             ("initialize", Some(id)) => respond(
                 &id,
                 serde_json::json!({
-                    "protocolVersion": "2025-06-18",
+                    "protocolVersion": if flags.wrong_version { "1999-01-01" } else { "2025-06-18" },
                     "capabilities": { "tools": {} },
                     "serverInfo": { "name": "mock-mcp-server", "version": "0.1.0" },
                 }),
             ),
             ("notifications/initialized", _) => {
-                if notify {
+                let notification = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/message",
+                    "params": { "level": "info", "data": "hello from mock" },
+                });
+                if flags.notify {
+                    let stdout = std::io::stdout();
+                    let mut lock = stdout.lock();
+                    writeln!(lock, "{notification}").expect("write notification");
+                    lock.flush().expect("flush notification");
+                }
+                if flags.notify_flood {
+                    let stdout = std::io::stdout();
+                    let mut lock = stdout.lock();
+                    for _ in 0..400 {
+                        writeln!(lock, "{notification}").expect("write notification");
+                    }
+                    lock.flush().expect("flush flood");
+                }
+                if flags.ping_client {
                     let stdout = std::io::stdout();
                     let mut lock = stdout.lock();
                     writeln!(
@@ -109,12 +154,12 @@ fn serve(no_handshake: bool, notify: bool) {
                         "{}",
                         serde_json::json!({
                             "jsonrpc": "2.0",
-                            "method": "notifications/message",
-                            "params": { "level": "info", "data": "hello from mock" },
+                            "id": "srv-ping-1",
+                            "method": "ping",
                         })
                     )
-                    .expect("write notification");
-                    lock.flush().expect("flush notification");
+                    .expect("write server ping");
+                    lock.flush().expect("flush server ping");
                 }
             }
             ("tools/list", Some(id)) => respond(

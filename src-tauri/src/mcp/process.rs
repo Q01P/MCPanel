@@ -9,6 +9,12 @@
 //!
 //! PDEATHSIG fires when the spawning *thread* dies — call [`spawn`] only from
 //! long-lived runtime threads, never from `spawn_blocking` workers.
+//!
+//! Residual gap (accepted): if MCPanel itself is SIGKILLed on Unix, the
+//! group-kill cleanup never runs and PDEATHSIG only reaches *direct*
+//! children — a grandchild (`npx` → `node`) is reparented and survives.
+//! Unix has no Job Object equivalent short of a watchdog helper process;
+//! Windows genuinely covers this case via KILL_ON_JOB_CLOSE.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -48,6 +54,12 @@ pub struct KillHandle {
 
 impl KillHandle {
     /// Ask the whole tree to exit: SIGTERM on Unix, CTRL_BREAK on Windows.
+    ///
+    /// Windows caveat (unverified on real hardware — CI only compiles this):
+    /// `GenerateConsoleCtrlEvent` only reaches processes sharing the
+    /// caller's console, and a GUI-subsystem Tauri app has none, so this is
+    /// likely a silent no-op there and stops degrade to the grace period
+    /// followed by `TerminateJobObject`. Revisit on a real Windows box.
     pub fn signal_graceful(&self) {
         #[cfg(unix)]
         unsafe {

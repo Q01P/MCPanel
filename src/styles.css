@@ -356,6 +356,26 @@ body {
   font-size: 0.85rem;
 }
 
+.timeout-field,
+.auto-start-field {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.timeout-field input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 0.4rem 0.4rem;
+  font-size: 0.85rem;
+  width: 4.5rem;
+}
+
 .send-button {
   background: var(--accent);
   border: none;

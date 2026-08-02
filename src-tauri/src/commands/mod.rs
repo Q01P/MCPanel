@@ -69,13 +69,14 @@ pub struct GatewayInfo {
 }
 
 #[tauri::command]
-#[tracing::instrument(target = "app::commands", skip(token))]
+#[tracing::instrument(target = "app::commands", skip(token, addr))]
 pub async fn gateway_info(
     token: State<'_, crate::server::AuthToken>,
+    addr: State<'_, crate::server::GatewayAddr>,
 ) -> AppResult<GatewayInfo> {
     info!(target: "app::commands", "gateway_info");
     Ok(GatewayInfo {
-        url: format!("http://{}", crate::server::GATEWAY_ADDR),
+        url: format!("http://{}", addr.0),
         token: token.expose().to_string(),
     })
 }

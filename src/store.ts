@@ -7,12 +7,17 @@ interface PanelState {
   loaded: boolean;
   error: string | null;
   load: () => Promise<void>;
+  resync: () => void;
   add: (server: NewServer) => Promise<void>;
   remove: (id: number) => Promise<void>;
   toggle: (id: number, run: boolean) => Promise<void>;
   applyEvent: (event: AppEvent) => void;
   clearError: () => void;
 }
+
+// Trailing debounce for resync so a burst of lagged markers becomes one
+// list_servers round trip.
+let resyncTimer: number | undefined;
 
 export const usePanel = create<PanelState>((set, get) => ({
   servers: [],
@@ -59,7 +64,18 @@ export const usePanel = create<PanelState>((set, get) => ({
     }
   },
 
+  resync: () => {
+    window.clearTimeout(resyncTimer);
+    resyncTimer = window.setTimeout(() => void get().load(), 250);
+  },
+
   applyEvent: (event) => {
+    if (event.type === "lagged") {
+      // Dropped broadcast events may have included status changes — the
+      // patch-by-event model is stale, so refetch the authoritative list.
+      get().resync();
+      return;
+    }
     if (event.type !== "status_changed") return;
     set({
       servers: get().servers.map((server) =>

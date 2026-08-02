@@ -34,7 +34,7 @@ Deliberately minimalist — **no Electron, no Node/Python backend**:
 | --- | --- |
 | Shell | Tauri v2 (system webview) |
 | Backend | Pure Rust: tokio process orchestration |
-| UI ↔ backend streaming | Token-guarded local Axum gateway on `127.0.0.1:6789` (SSE + JSON-RPC forwarding) |
+| UI ↔ backend streaming | Token-guarded local Axum gateway on an ephemeral loopback port (SSE + JSON-RPC forwarding) |
 | Config storage | SQLite (rusqlite, bundled) |
 | Secrets | `keyring` v4 → OS credential store |
 | Frontend | React 19 + Vite 8 + TypeScript + Zustand (not scaffolded yet) |
@@ -101,6 +101,23 @@ Proven details from the prototype (keep when implementing):
   `Child`, because the exit-waiter task owns the `Child` for `wait()`.
 - `kill_on_drop(true)` as belt-and-braces for normal drop paths.
 
+Known residual gaps (accepted, by design):
+
+- **Unix, supervisor SIGKILLed:** the `kill(-pgid)` cleanup never runs and
+  PDEATHSIG only covers *direct* children — a grandchild (`npx` → `node`)
+  is reparented and survives. Unix has no Job Object equivalent short of a
+  watchdog helper process, which isn't worth its complexity here; Windows
+  genuinely covers this case (the kernel kills the job on handle close).
+  The SIGKILL flagship test asserts the direct child dies — grandchild
+  coverage exists only on the controlled-shutdown path.
+- **Windows graceful shutdown is unverified** (CI compiles it, nothing has
+  executed it). `GenerateConsoleCtrlEvent` requires sharing a console with
+  the target; a GUI-subsystem Tauri app has none, so the CTRL_BREAK phase is
+  likely a silent no-op and every Windows stop degrades to the 2 s grace
+  followed by `TerminateJobObject`. Acceptable for MCP servers, but decide —
+  and possibly drop the dead grace period — once a real Windows box is
+  available.
+
 ### Streams
 
 - Two async tasks per child (stdout/stderr) using `tokio_util::codec::LinesCodec`.
@@ -120,24 +137,45 @@ Proven details from the prototype (keep when implementing):
 - Rust owns the handshake: on server start, send `initialize`, await the
   response, send `notifications/initialized` — only then may the UI issue
   tool calls. State machine: `Stopped → Starting → Initializing → Running /
-  Errored`.
-- Advertised protocol version: `2025-06-18`. Capture `capabilities` +
-  `serverInfo` from the handshake for the UI.
+  Errored`. Starts are cancellable: `stop` (and `remove`) during
+  Starting/Initializing cancels the in-flight start, kills anything already
+  spawned, and settles Stopped — a hung handshake never pins the UI for the
+  full timeout.
+- Advertised protocol version: `2025-06-18`; interop accepted for the
+  published revisions (`2025-06-18`, `2025-03-26`, `2024-11-05`). A server
+  answering any other version (or none) fails the handshake and is torn down
+  — per spec, disconnect on unsupported versions rather than proceed on
+  hope. Capture `capabilities` + `serverInfo` from the handshake for the UI.
 - Request/response correlation: monotonic i64 ids → oneshot channels, with a
-  per-request timeout; fail all in-flight requests when stdout reaches EOF.
-- Server→client requests (e.g. `roots/list`): reply `-32601` politely so the
-  server isn't left waiting. Server notifications fan out to the UI stream.
+  per-request timeout (default 30 s, per-call overridable); fail all
+  in-flight requests when stdout reaches EOF.
+- Server→client requests: `ping` gets an empty result (servers use it for
+  liveness); everything else (e.g. `roots/list`) gets a polite `-32601` so
+  the server isn't left waiting. Server notifications fan out to the UI
+  stream with drop accounting — overflow of the advisory channel surfaces
+  as a `notification_gap` event, mirroring the log path's gap markers.
 - Handshake timeout ⇒ tear the process tree down and mark the server Errored.
 
 ### HTTP gateway
 
-- Axum on `127.0.0.1:6789`; reject non-loopback connections.
+- Axum on an **ephemeral loopback port** (`127.0.0.1:0`, bound in `setup`;
+  bind failure aborts the launch loudly). The webview learns the real
+  address via `gateway_info`. No fixed port means a second instance gets its
+  own gateway and no local page can fingerprint the app by probing a
+  well-known port.
 - Random bearer token generated **in memory at startup**, required on every
-  route (query param for `GET /sse` since `EventSource` can't set headers).
+  route. The query-param fallback exists on `GET /sse` only (`EventSource`
+  can't set headers); `POST /mcp` requires the Authorization header so the
+  token never rides in a URL. Nothing logs request URIs.
+- Host validation on every route: requests whose Host header isn't the bound
+  address (or its `localhost` spelling) are rejected — defense-in-depth
+  against DNS rebinding on top of the token.
 - `GET /sse` — server state changes + log lines for the UI.
 - `POST /mcp/{server_id}` — forwards JSON-RPC to the child's stdin
-  (axum 0.8 = `/{param}` route syntax).
-- 30 s timeout middleware on POSTs (`tower` timeout).
+  (axum 0.8 = `/{param}` route syntax). Per-request timeout via
+  `?timeout_s=` (clamped to 1–300 s, default 30) — slow tools are the
+  workbench's subject matter; the `tower` timeout layer is a 310 s backstop
+  strictly above the cap so the two never race.
 
 ### Errors
 
@@ -160,9 +198,14 @@ failures via explicit variants (`ServerNotFound`, `Handshake`, `Timeout`,
 
 - rusqlite (bundled), hand-rolled `PRAGMA user_version` migrations — no ORM.
 - `servers` table: name, command, args (JSON), env (JSON), cwd, auto-start.
+  Ids are `AUTOINCREMENT` (schema v2) — never reused after a delete, so a
+  recreated server cannot inherit a previous server's keyring entries.
 - Env values marked secret store only a *reference*; the real value lives in
-  the OS credential manager under `mcpanel/<server>/<key>` and is resolved
-  just-in-time at spawn. Never written to config, DB, or logs.
+  the OS credential manager under `mcpanel/<id>/<key>` and is resolved
+  just-in-time at spawn. Never written to config, DB, or logs. Keyed by id,
+  not name, so renames can't orphan credentials; entries from the legacy
+  `mcpanel/<name>/<key>` scheme are migrated once at startup, and
+  `remove_server` deletes a server's entries along with its row.
 
 ## 4. Testing strategy
 
@@ -178,6 +221,9 @@ tiny stdio binary speaking just enough MCP, with failure-mode flags:
 | `--garbage` | prints non-JSON to stdout before serving | garbage-tolerant stdout routing |
 | `--ansi` | ANSI-colored stderr | ANSI stripping |
 | `--notify` | emits a notification after `initialized` | server-notification fan-out |
+| `--notify-flood` | emits 400 notifications after `initialized` | notification drop accounting |
+| `--wrong-version` | answers `initialize` with a bogus protocolVersion | unsupported-version disconnect |
+| `--ping-client` | sends a server→client `ping`, confirms the pong on stderr | ping liveness reply |
 
 Flagship tests (both proven in the prototype):
 

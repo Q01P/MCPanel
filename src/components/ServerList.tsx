@@ -41,7 +41,6 @@ function ServerRow({ server }: { server: ServerOverview }) {
         <input
           type="checkbox"
           checked={running || busy}
-          disabled={busy}
           onChange={(e) => void toggle(server.id, e.target.checked)}
         />
         <span className="slider" />

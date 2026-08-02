@@ -4,8 +4,9 @@
 //! stdout is the protocol channel; stderr is logs. Every stdout line that is
 //! a JSON-RPC object (has `"jsonrpc"`) goes to the dispatcher; anything else
 //! — servers misbehave — falls back into the log buffer instead of being
-//! lost. Responses resolve pending oneshots by id; server→client requests
-//! get a polite `-32601`; server notifications fan out to the UI stream.
+//! lost. Responses resolve pending oneshots by id; server→client `ping`
+//! gets an empty result, other server→client requests a polite `-32601`;
+//! server notifications fan out to the UI stream with drop accounting.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -23,9 +24,24 @@ use crate::mcp::stream::{BoundedForwarder, CHANNEL_CAPACITY, StreamEvent, json_c
 /// Advertised MCP protocol version.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
+/// Published MCP revisions we can interoperate with. Everything this client
+/// uses (initialize, tools/*, ping, notifications) is compatible across
+/// them; a server negotiating anything else gets disconnected per spec
+/// rather than proceeding on hope.
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 const NOTIFICATION_CAPACITY: usize = 256;
+
+/// What the notification fan-out receives: server frames, or a marker for
+/// frames discarded while the advisory channel was full — the notification
+/// path gets the same drop accounting as the log path.
+#[derive(Debug)]
+pub enum NotificationEvent {
+    Frame(Value),
+    Gap(u64),
+}
 
 /// What the `initialize` handshake yields, kept for the UI.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -57,8 +73,8 @@ pub struct ProtocolHandle {
     pub client: McpClient,
     /// Non-protocol stdout lines, routed into the log buffer.
     pub stdout_logs: mpsc::Receiver<StreamEvent>,
-    /// Server notifications, for UI fan-out.
-    pub notifications: mpsc::Receiver<Value>,
+    /// Server notifications (with gap markers), for UI fan-out.
+    pub notifications: mpsc::Receiver<NotificationEvent>,
 }
 
 /// Wire a protocol client onto a child's stdin and its pumped stdout lines
@@ -92,8 +108,20 @@ pub fn connect(
 
 impl McpClient {
     /// Send a request and await its correlated response, bounded by the
-    /// per-request timeout.
+    /// client's default per-request timeout.
     pub async fn request(&self, method: &str, params: Value) -> AppResult<Value> {
+        self.request_with_timeout(method, params, self.inner.request_timeout)
+            .await
+    }
+
+    /// Like [`Self::request`] with an explicit bound — the workbench lets
+    /// callers wait out slow tools instead of racing a fixed 30 s.
+    pub async fn request_with_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> AppResult<Value> {
         if self.inner.closed.load(Ordering::SeqCst) {
             return Err(AppError::ConnectionClosed);
         }
@@ -108,7 +136,7 @@ impl McpClient {
             return Err(AppError::ConnectionClosed);
         }
 
-        match tokio::time::timeout(self.inner.request_timeout, rx).await {
+        match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(_)) => Err(AppError::ConnectionClosed),
             Err(_) => {
@@ -146,14 +174,28 @@ impl McpClient {
                 }),
             )
             .await?;
+
+        // Per spec the client disconnects on an unsupported version — so
+        // validate before `notifications/initialized` commits the session.
+        let protocol_version = result
+            .get("protocolVersion")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if !SUPPORTED_PROTOCOL_VERSIONS.contains(&protocol_version.as_str()) {
+            return Err(AppError::Handshake(if protocol_version.is_empty() {
+                "server reported no protocol version".to_string()
+            } else {
+                format!(
+                    "unsupported protocol version {protocol_version:?} \
+                     (supported: {SUPPORTED_PROTOCOL_VERSIONS:?})"
+                )
+            }));
+        }
         self.notify("notifications/initialized", json!({})).await?;
 
         Ok(ServerHandshake {
-            protocol_version: result
-                .get("protocolVersion")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
+            protocol_version,
             capabilities: result.get("capabilities").cloned().unwrap_or(json!({})),
             server_info: result.get("serverInfo").cloned().unwrap_or(json!({})),
         })
@@ -175,14 +217,17 @@ async fn route(
     mut stdout: mpsc::Receiver<StreamEvent>,
     inner: Arc<ClientInner>,
     logs_tx: mpsc::Sender<StreamEvent>,
-    notif_tx: mpsc::Sender<Value>,
+    notif_tx: mpsc::Sender<NotificationEvent>,
 ) {
     let mut logs = BoundedForwarder::new(logs_tx);
+    // Notifications discarded while the channel was full; flushed as a Gap
+    // marker as soon as there is room again (and once more at EOF).
+    let mut notif_lost: u64 = 0;
 
     while let Some(event) = stdout.recv().await {
         match event {
             StreamEvent::Line(line) => match parse_frame(&line) {
-                Some(frame) => dispatch(&inner, &notif_tx, frame).await,
+                Some(frame) => dispatch(&inner, &notif_tx, &mut notif_lost, frame).await,
                 // Not JSON-RPC → log buffer; a gone log receiver is fine,
                 // protocol routing continues regardless.
                 None => {
@@ -203,6 +248,9 @@ async fn route(
             let _ = tx.send(Err(AppError::ConnectionClosed));
         }
     }
+    if notif_lost > 0 {
+        let _ = notif_tx.try_send(NotificationEvent::Gap(notif_lost));
+    }
     logs.finish().await;
 }
 
@@ -217,7 +265,12 @@ fn parse_frame(line: &str) -> Option<Value> {
     parse(line).or_else(|| json_candidate(line).and_then(parse))
 }
 
-async fn dispatch(inner: &Arc<ClientInner>, notif_tx: &mpsc::Sender<Value>, frame: Value) {
+async fn dispatch(
+    inner: &Arc<ClientInner>,
+    notif_tx: &mpsc::Sender<NotificationEvent>,
+    notif_lost: &mut u64,
+    frame: Value,
+) {
     let id = frame.get("id");
     let is_response = frame.get("result").is_some() || frame.get("error").is_some();
 
@@ -241,20 +294,35 @@ async fn dispatch(inner: &Arc<ClientInner>, notif_tx: &mpsc::Sender<Value>, fram
             };
             let _ = tx.send(outcome);
         }
-        // Server→client request (e.g. roots/list): reply politely so the
-        // server isn't left waiting.
+        // Server→client request: `ping` must get an empty result (a server
+        // probing liveness would treat an error as a dead connection); every
+        // other method gets a polite `-32601` so the server isn't left
+        // waiting.
         (Some(id), false) if frame.get("method").is_some() => {
-            let reply = json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32601, "message": "method not supported by MCPanel" },
-            })
+            let reply = if frame.get("method").and_then(Value::as_str) == Some("ping") {
+                json!({ "jsonrpc": "2.0", "id": id, "result": {} })
+            } else {
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32601, "message": "method not supported by MCPanel" },
+                })
+            }
             .to_string();
             let _ = inner.writer_tx.send(reply).await;
         }
-        // Server notification → UI stream; advisory, dropped under pressure.
+        // Server notification → UI stream; advisory, but drops are counted
+        // and surfaced as a Gap once the channel has room again.
         (None, _) if frame.get("method").is_some() => {
-            let _ = notif_tx.try_send(frame);
+            if *notif_lost > 0 {
+                if let Ok(permit) = notif_tx.try_reserve() {
+                    permit.send(NotificationEvent::Gap(*notif_lost));
+                    *notif_lost = 0;
+                }
+            }
+            if notif_tx.try_send(NotificationEvent::Frame(frame)).is_err() {
+                *notif_lost += 1;
+            }
         }
         _ => debug!(target: "app::protocol", "unroutable jsonrpc frame"),
     }

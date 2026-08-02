@@ -22,10 +22,13 @@ async fn body_json(response: axum::response::Response) -> Value {
     serde_json::from_slice(&bytes).expect("json body")
 }
 
+const TEST_HOST: &str = "127.0.0.1:4321";
+
 fn post(gateway: &Gateway, server_id: i64, payload: Value) -> Request<Body> {
     Request::builder()
         .method("POST")
         .uri(format!("/mcp/{server_id}"))
+        .header(header::HOST, TEST_HOST)
         .header(
             header::AUTHORIZATION,
             format!("Bearer {}", gateway.token.expose()),
@@ -40,6 +43,7 @@ async fn forwards_jsonrpc_to_a_running_server() {
     let gateway = Gateway {
         token: AuthToken::generate(),
         app: AppState::new(db::open_in_memory().expect("db")),
+        host: TEST_HOST.into(),
     };
 
     let id = lifecycle::add(

@@ -4,11 +4,13 @@
 //! Plain functions over `AppState` so the whole lifecycle is testable
 //! without a webview.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
+use tokio_util::sync::CancellationToken;
 
 use crate::db::{self, EnvValue, NewServer, ServerRecord};
 use crate::error::{AppError, AppResult};
@@ -20,6 +22,18 @@ use crate::state::{AppEvent, AppState, LogStream, RunningServer, ServerId, Serve
 /// After the grace-period hard kill, how long we wait for the exit waiter to
 /// confirm death before giving up (it should be near-instant).
 const KILL_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Bound on waiting for a cancelled start to settle: covers a SIGKILL, the
+/// reap, and margin — never the 30 s handshake, which the cancel interrupts.
+const CANCEL_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How `run_startup` ended when it didn't fail: the server reached Running,
+/// or a concurrent stop/remove cancelled the attempt (and any spawned child
+/// is already dead).
+enum StartOutcome {
+    Running,
+    Cancelled,
+}
 
 pub async fn list(state: &AppState) -> AppResult<Vec<ServerOverview>> {
     let records = state.with_db(db::list_servers).await?;
@@ -45,19 +59,94 @@ pub async fn add(state: &AppState, new: NewServer) -> AppResult<ServerRecord> {
 }
 
 pub async fn update(state: &AppState, record: ServerRecord) -> AppResult<()> {
+    let id = record.id;
+    let old = state.with_db(move |conn| db::get_server(conn, id)).await?;
+    // Secret keys whose marker disappears in this update would leave their
+    // keyring entries orphaned — collect them now, delete after the DB write.
+    let removed: Vec<String> = old
+        .env
+        .iter()
+        .filter(|(key, value)| {
+            **value == EnvValue::Secret && record.env.get(*key) != Some(&EnvValue::Secret)
+        })
+        .map(|(key, _)| key.clone())
+        .collect();
     state
         .with_db(move |conn| db::update_server(conn, &record))
+        .await?;
+    if !removed.is_empty() {
+        tokio::task::spawn_blocking(move || {
+            crate::secrets::delete_keys_best_effort(id, removed.iter());
+        })
         .await
+        .map_err(|join| AppError::Io(std::io::Error::other(join)))?;
+    }
+    Ok(())
 }
 
-/// Stops the server first if it is running, then deletes its config.
+/// Stops the server first (cancelling an in-flight start if there is one),
+/// deletes its keyring entries, then its config row. A start that read the
+/// row before the delete registered itself before the delete too, so the
+/// post-delete backstop stop catches it; one whose claim lands after the
+/// delete fails `get_server` and self-cleans.
+///
+/// Consciously left open: a `set_secret` racing this can recreate a keyring
+/// entry after cleanup — unreachable garbage (ids are never reused), same
+/// class as pre-migration orphans.
 pub async fn remove(state: &AppState, id: ServerId) -> AppResult<()> {
     stop(state, id).await?;
-    state.with_db(move |conn| db::delete_server(conn, id)).await
+    let record = state.with_db(move |conn| db::get_server(conn, id)).await?;
+    tokio::task::spawn_blocking(move || crate::secrets::delete_server_secrets(&record))
+        .await
+        .map_err(|join| AppError::Io(std::io::Error::other(join)))?;
+    state.with_db(move |conn| db::delete_server(conn, id)).await?;
+    stop(state, id).await
 }
 
 pub async fn start(state: &AppState, id: ServerId) -> AppResult<()> {
     start_with_timeout(state, id, DEFAULT_REQUEST_TIMEOUT).await
+}
+
+/// Launch-time sweep: start every server marked `auto_start`, concurrently.
+/// Failures mark the individual server Errored (visible in the UI) but never
+/// abort the sweep or the launch.
+pub async fn start_auto_servers(state: &AppState) {
+    let records = match state.with_db(db::list_servers).await {
+        Ok(records) => records,
+        Err(error) => {
+            tracing::warn!(target: "app::lifecycle", %error, "auto-start sweep could not list servers");
+            return;
+        }
+    };
+    let starts = records
+        .into_iter()
+        .filter(|record| record.auto_start)
+        .map(|record| {
+            let state = state.clone();
+            async move {
+                if let Err(error) = start(&state, record.id).await {
+                    tracing::warn!(
+                        target: "app::lifecycle",
+                        id = record.id,
+                        name = %record.name,
+                        %error,
+                        "auto-start failed"
+                    );
+                }
+            }
+        });
+    futures_join_all(starts).await;
+}
+
+/// Minimal join_all — awaiting each spawned handle in turn; the tasks run
+/// concurrently from the moment they're spawned.
+async fn futures_join_all<F: Future<Output = ()> + Send + 'static>(
+    futures: impl Iterator<Item = F>,
+) {
+    let handles: Vec<_> = futures.map(tokio::spawn).collect();
+    for handle in handles {
+        let _ = handle.await;
+    }
 }
 
 /// `request_timeout` also bounds the handshake — injectable for tests.
@@ -66,11 +155,23 @@ pub async fn start_with_timeout(
     id: ServerId,
     request_timeout: Duration,
 ) -> AppResult<()> {
-    if !state.try_begin_start(id) {
+    let Some(guard) = state.try_begin_start(id) else {
         return Ok(()); // already starting or running — toggles are idempotent
-    }
-    match run_startup(state, id, request_timeout).await {
-        Ok(()) => Ok(()),
+    };
+    // `guard` lives to the end of this scope: it settles (unblocking any
+    // waiting stop/remove) only after the final status below is written.
+    match run_startup(state, id, request_timeout, guard.token()).await {
+        Ok(StartOutcome::Running) => Ok(()),
+        Ok(StartOutcome::Cancelled) => {
+            state.set_status(id, ServerStatus::Stopped);
+            Ok(()) // the stop won; toggles are idempotent
+        }
+        Err(_) if guard.token().is_cancelled() => {
+            // Teardown artifact of a concurrent stop — the stop's outcome
+            // (Stopped) wins over the startup error.
+            state.set_status(id, ServerStatus::Stopped);
+            Ok(())
+        }
         Err(error) => {
             match &error {
                 // Unknown server: no ghost Errored entry, just back to absent.
@@ -91,16 +192,28 @@ async fn run_startup(
     state: &AppState,
     id: ServerId,
     request_timeout: Duration,
-) -> AppResult<()> {
-    let record = state.with_db(move |conn| db::get_server(conn, id)).await?;
+    cancel: &CancellationToken,
+) -> AppResult<StartOutcome> {
+    // Cancellation points bracket every await: before the child exists a
+    // cancel simply abandons the attempt; from spawn onward the select on
+    // the handshake (which fires immediately if the token is already
+    // cancelled) kills the tree. The kill handle stays local — this task is
+    // the only owner of the child until the runtime is installed.
+    let record = tokio::select! {
+        _ = cancel.cancelled() => return Ok(StartOutcome::Cancelled),
+        record = state.with_db(move |conn| db::get_server(conn, id)) => record?,
+    };
 
     // Secret resolution hits the OS credential store (blocking) and happens
     // just-in-time — the resolved values exist only in the child's spawn
-    // config, never in state, DB, or logs.
+    // config, never in state, DB, or logs. An abandoned resolve finishes
+    // harmlessly on the blocking pool.
     let env_record = record.clone();
-    let env = tokio::task::spawn_blocking(move || crate::secrets::resolve_env(&env_record))
-        .await
-        .map_err(|join| AppError::Io(std::io::Error::other(join)))??;
+    let resolve = tokio::task::spawn_blocking(move || crate::secrets::resolve_env(&env_record));
+    let env = tokio::select! {
+        _ = cancel.cancelled() => return Ok(StartOutcome::Cancelled),
+        joined = resolve => joined.map_err(|join| AppError::Io(std::io::Error::other(join)))??,
+    };
 
     let config = ProcessConfig {
         command: record.command.clone(),
@@ -127,30 +240,43 @@ async fn run_startup(
     tokio::spawn(fan_out_lines(state.clone(), id, LogStream::Stdout, proto.stdout_logs));
     tokio::spawn(fan_out_notifications(state.clone(), id, proto.notifications));
 
-    let handshake = match proto.client.handshake().await {
-        Ok(handshake) => handshake,
-        Err(error) => {
-            // Handshake failure/timeout ⇒ tear the process tree down.
+    let handshake = tokio::select! {
+        _ = cancel.cancelled() => {
+            // Cancelled with a live child ⇒ tear the process tree down here;
+            // no runtime exists yet, so nobody else can.
             kill.kill_now();
-            let _ = child.wait().await;
-            return Err(error);
+            let _ = tokio::time::timeout(KILL_CONFIRM_TIMEOUT, child.wait()).await;
+            return Ok(StartOutcome::Cancelled);
         }
+        handshake = proto.client.handshake() => match handshake {
+            Ok(handshake) => handshake,
+            Err(error) => {
+                // Handshake failure/timeout ⇒ tear the process tree down.
+                kill.kill_now();
+                let _ = child.wait().await;
+                return Err(error);
+            }
+        },
     };
 
     let stopping = Arc::new(AtomicBool::new(false));
     let (exit_tx, exit_rx) = watch::channel(false);
-    state.install_runtime(
-        id,
-        RunningServer {
-            pid,
-            client: proto.client,
-            kill,
-            handshake,
-            stopping: Arc::clone(&stopping),
-            exited: exit_rx,
-        },
-    );
-    state.set_status(id, ServerStatus::Running);
+    let running = RunningServer {
+        pid,
+        client: proto.client,
+        kill: kill.clone(),
+        handshake,
+        stopping: Arc::clone(&stopping),
+        exited: exit_rx,
+    };
+    // Atomic promotion to Running: fails iff a concurrent stop/remove
+    // cancelled the start after the handshake select — the child must die
+    // and the cancelled entry must not be resurrected.
+    if !state.try_install_runtime(id, running) {
+        kill.kill_now();
+        let _ = tokio::time::timeout(KILL_CONFIRM_TIMEOUT, child.wait()).await;
+        return Ok(StartOutcome::Cancelled);
+    }
 
     // Exit waiter: owns the Child, reaps it, and settles the final status.
     let waiter_state = state.clone();
@@ -173,13 +299,25 @@ async fn run_startup(
         }
     });
 
-    Ok(())
+    Ok(StartOutcome::Running)
 }
 
 /// Graceful stop per spec: signal the tree, wait the grace period, then hard
 /// kill. The exit waiter settles the Stopped status; this returns once the
-/// child is confirmed dead.
+/// child is confirmed dead. A start still in flight is cancelled first — the
+/// start task kills anything it spawned and writes the final status before
+/// its guard settles, so the re-inspection below sees the true end state.
 pub async fn stop(state: &AppState, id: ServerId) -> AppResult<()> {
+    if let Some(start) = state.start_handle(id) {
+        start.cancel.cancel();
+        let mut settled = start.settled.clone();
+        // A closed channel means the guard dropped — settled either way.
+        let settle = tokio::time::timeout(CANCEL_SETTLE_TIMEOUT, settled.wait_for(|done| *done));
+        if matches!(settle.await, Err(_elapsed)) {
+            return Err(AppError::Timeout(format!("cancelling start of server {id}")));
+        }
+    }
+
     let Some(runtime) = state.runtime(id) else {
         // Not running; clear a lingering Errored entry back to Stopped.
         if state.status(id) != ServerStatus::Stopped {
@@ -217,9 +355,8 @@ pub async fn set_secret(
 ) -> AppResult<()> {
     let mut record = state.with_db(move |conn| db::get_server(conn, id)).await?;
 
-    let name = record.name.clone();
     let store_key = key.clone();
-    tokio::task::spawn_blocking(move || crate::secrets::store_secret(&name, &store_key, &value))
+    tokio::task::spawn_blocking(move || crate::secrets::store_secret(id, &store_key, &value))
         .await
         .map_err(|join| AppError::Io(std::io::Error::other(join)))??;
 
@@ -236,9 +373,8 @@ pub async fn set_secret(
 pub async fn delete_secret(state: &AppState, id: ServerId, key: String) -> AppResult<()> {
     let mut record = state.with_db(move |conn| db::get_server(conn, id)).await?;
 
-    let name = record.name.clone();
     let delete_key = key.clone();
-    tokio::task::spawn_blocking(move || crate::secrets::delete_secret(&name, &delete_key))
+    tokio::task::spawn_blocking(move || crate::secrets::delete_secret(id, &delete_key))
         .await
         .map_err(|join| AppError::Io(std::io::Error::other(join)))??;
 
@@ -275,9 +411,13 @@ async fn fan_out_lines(
 async fn fan_out_notifications(
     state: AppState,
     server_id: ServerId,
-    mut rx: mpsc::Receiver<serde_json::Value>,
+    mut rx: mpsc::Receiver<crate::mcp::protocol::NotificationEvent>,
 ) {
-    while let Some(payload) = rx.recv().await {
-        state.publish(AppEvent::Notification { server_id, payload });
+    use crate::mcp::protocol::NotificationEvent;
+    while let Some(event) = rx.recv().await {
+        state.publish(match event {
+            NotificationEvent::Frame(payload) => AppEvent::Notification { server_id, payload },
+            NotificationEvent::Gap(dropped) => AppEvent::NotificationGap { server_id, dropped },
+        });
     }
 }

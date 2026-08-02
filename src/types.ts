@@ -29,6 +29,8 @@ export type AppEvent =
   | { type: "log"; server_id: number; stream: LogStreamName; line: string }
   | { type: "log_gap"; server_id: number; stream: LogStreamName; dropped: number }
   | { type: "notification"; server_id: number; payload: unknown }
+  // Notifications lost to backpressure on the backend's advisory channel.
+  | { type: "notification_gap"; server_id: number; dropped: number }
   // Synthetic gateway marker: this SSE subscriber fell behind the broadcast.
   | { type: "lagged"; missed: number };
 

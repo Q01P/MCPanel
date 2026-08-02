@@ -15,6 +15,15 @@ fn test_state() -> AppState {
 }
 
 async fn add_fixture(state: &AppState, name: &str, args: &[&str]) -> ServerId {
+    add_fixture_auto(state, name, args, false).await
+}
+
+async fn add_fixture_auto(
+    state: &AppState,
+    name: &str,
+    args: &[&str],
+    auto_start: bool,
+) -> ServerId {
     lifecycle::add(
         state,
         NewServer {
@@ -23,7 +32,7 @@ async fn add_fixture(state: &AppState, name: &str, args: &[&str]) -> ServerId {
             args: args.iter().map(|a| a.to_string()).collect(),
             env: BTreeMap::new(),
             cwd: None,
-            auto_start: false,
+            auto_start,
         },
     )
     .await
@@ -189,4 +198,179 @@ async fn remove_stops_then_deletes() {
     lifecycle::remove(&state, id).await.expect("remove");
     wait_for("process death", || !alive(pid)).await;
     assert!(lifecycle::list(&state).await.expect("list").is_empty());
+}
+
+/// The launch sweep starts exactly the servers marked `auto_start`; a
+/// failing one goes Errored without derailing the others.
+#[tokio::test]
+async fn auto_start_sweep_starts_only_marked_servers() {
+    let state = test_state();
+    let auto = add_fixture_auto(&state, "auto", &[], true).await;
+    let manual = add_fixture_auto(&state, "manual", &[], false).await;
+    let broken = lifecycle::add(
+        &state,
+        NewServer {
+            name: "auto-broken".into(),
+            command: "/nonexistent/binary".into(),
+            args: vec![],
+            env: BTreeMap::new(),
+            cwd: None,
+            auto_start: true,
+        },
+    )
+    .await
+    .expect("insert broken server")
+    .id;
+
+    lifecycle::start_auto_servers(&state).await;
+
+    assert_eq!(state.status(auto), ServerStatus::Running);
+    assert_eq!(state.status(manual), ServerStatus::Stopped);
+    assert!(
+        matches!(state.status(broken), ServerStatus::Errored { .. }),
+        "broken auto-start server is Errored, not fatal"
+    );
+
+    lifecycle::stop(&state, auto).await.expect("cleanup");
+}
+
+/// The `--spawn-child --no-handshake` fixture prints its grandchild's pid to
+/// stdout (a `Log` event) and then never answers `initialize` — a start that
+/// hangs in `Initializing` with a real process tree to kill.
+async fn grandchild_pid_from_logs(
+    events: &mut tokio::sync::broadcast::Receiver<AppEvent>,
+    id: ServerId,
+) -> i32 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let event = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .expect("grandchild pid within deadline")
+            .expect("event channel open");
+        if let AppEvent::Log { server_id, stream: LogStream::Stdout, line } = event {
+            if server_id == id {
+                if let Ok(pid) = line.trim().parse::<i32>() {
+                    return pid;
+                }
+            }
+        }
+    }
+}
+
+/// Stop during Initializing cancels the hung handshake, kills the process
+/// tree, and settles Stopped — the stop must not be silently lost.
+#[tokio::test]
+async fn stop_cancels_start_during_initializing() {
+    let state = test_state();
+    let mut events = state.subscribe();
+    let id = add_fixture(&state, "hung", &["--spawn-child", "--no-handshake"]).await;
+
+    let task_state = state.clone();
+    let start_task = tokio::spawn(async move {
+        lifecycle::start_with_timeout(&task_state, id, Duration::from_secs(10)).await
+    });
+    wait_for("Initializing status", || {
+        state.status(id) == ServerStatus::Initializing
+    })
+    .await;
+    let grandchild = grandchild_pid_from_logs(&mut events, id).await;
+
+    let stopped_at = tokio::time::Instant::now();
+    lifecycle::stop(&state, id).await.expect("cancel via stop");
+    assert!(
+        stopped_at.elapsed() < Duration::from_secs(5),
+        "stop must not ride out the handshake timeout"
+    );
+
+    start_task
+        .await
+        .expect("join")
+        .expect("cancelled start returns Ok — the stop won");
+    assert_eq!(state.status(id), ServerStatus::Stopped);
+    assert!(state.runtime(id).is_none(), "no runtime after cancel");
+    wait_for("grandchild death", || !alive(grandchild)).await;
+}
+
+/// Remove during an in-flight start cancels it before deleting the row — no
+/// orphaned process, no ghost registry entry, no leftover config.
+#[tokio::test]
+async fn remove_while_starting_leaves_no_process_and_no_row() {
+    let state = test_state();
+    let mut events = state.subscribe();
+    let id = add_fixture(&state, "doomed-early", &["--spawn-child", "--no-handshake"]).await;
+
+    let task_state = state.clone();
+    let start_task = tokio::spawn(async move {
+        lifecycle::start_with_timeout(&task_state, id, Duration::from_secs(10)).await
+    });
+    wait_for("Initializing status", || {
+        state.status(id) == ServerStatus::Initializing
+    })
+    .await;
+    let grandchild = grandchild_pid_from_logs(&mut events, id).await;
+
+    lifecycle::remove(&state, id).await.expect("remove");
+
+    start_task.await.expect("join").expect("cancelled start is Ok");
+    assert!(lifecycle::list(&state).await.expect("list").is_empty());
+    assert_eq!(state.status(id), ServerStatus::Stopped);
+    wait_for("grandchild death", || !alive(grandchild)).await;
+}
+
+/// start and remove racing from the first instruction: whatever the
+/// interleaving, the end state is clean — no row, no registry entry, no
+/// surviving process.
+#[tokio::test]
+async fn concurrent_start_and_remove_settle_clean() {
+    let state = test_state();
+    let mut events = state.subscribe();
+
+    for round in 0..5 {
+        let id = add_fixture(
+            &state,
+            &format!("racer-{round}"),
+            &["--spawn-child", "--no-handshake"],
+        )
+        .await;
+
+        let start_state = state.clone();
+        let remove_state = state.clone();
+        let (start_result, remove_result) = tokio::join!(
+            tokio::spawn(async move {
+                lifecycle::start_with_timeout(&start_state, id, Duration::from_secs(10)).await
+            }),
+            tokio::spawn(async move { lifecycle::remove(&remove_state, id).await }),
+        );
+
+        remove_result.expect("join").expect("remove succeeds");
+        match start_result.expect("join") {
+            // Cancelled mid-flight (Ok) or lost the row race entirely.
+            Ok(()) => {}
+            Err(mcpanel_lib::error::AppError::ServerNotFound(_)) => {}
+            Err(other) => panic!("round {round}: unexpected start error: {other:?}"),
+        }
+
+        assert!(
+            lifecycle::list(&state).await.expect("list").is_empty(),
+            "round {round}: row must be gone"
+        );
+        assert_eq!(
+            state.status(id),
+            ServerStatus::Stopped,
+            "round {round}: no ghost registry entry"
+        );
+    }
+
+    // Any grandchild whose pid made it into the log stream must be dead.
+    let mut grandchildren = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let AppEvent::Log { stream: LogStream::Stdout, line, .. } = event {
+            if let Ok(pid) = line.trim().parse::<i32>() {
+                grandchildren.push(pid);
+            }
+        }
+    }
+    for pid in grandchildren {
+        wait_for("grandchild death", || !alive(pid)).await;
+    }
 }

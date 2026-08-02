@@ -23,11 +23,28 @@ const MIGRATIONS: &[&str] = &[
         cwd        TEXT,
         auto_start INTEGER NOT NULL DEFAULT 0
     );",
+    // v2: AUTOINCREMENT so deleted ids are never reused — keyring entries
+    // are keyed by id, and a recreated server must not inherit a previous
+    // server's credentials. SQLite can't add AUTOINCREMENT in place, so the
+    // table is rebuilt; explicit-id inserts seed sqlite_sequence to max(id).
+    "CREATE TABLE servers_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL UNIQUE,
+        command    TEXT NOT NULL,
+        args       TEXT NOT NULL DEFAULT '[]',
+        env        TEXT NOT NULL DEFAULT '{}',
+        cwd        TEXT,
+        auto_start INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO servers_new (id, name, command, args, env, cwd, auto_start)
+        SELECT id, name, command, args, env, cwd, auto_start FROM servers;
+    DROP TABLE servers;
+    ALTER TABLE servers_new RENAME TO servers;",
 ];
 
 /// An environment value as stored in config. Secrets are only ever a marker:
 /// the real value lives in the OS credential manager under
-/// `mcpanel/<server>/<key>` and is resolved just-in-time at spawn (T9) —
+/// `mcpanel/<id>/<key>` and is resolved just-in-time at spawn (T9) —
 /// never written to config, DB, or logs.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -252,6 +269,58 @@ mod tests {
             Some(&EnvValue::Secret),
             "secret round-trips as a marker only"
         );
+    }
+
+    #[test]
+    fn deleted_ids_are_never_reused() {
+        let conn = open_in_memory().unwrap();
+
+        let first = insert_server(&conn, &sample()).unwrap();
+        delete_server(&conn, first.id).unwrap();
+
+        let second = insert_server(&conn, &sample()).unwrap();
+        assert!(
+            second.id > first.id,
+            "id {} reused after delete (was {})",
+            second.id,
+            first.id
+        );
+    }
+
+    #[test]
+    fn v1_db_migrates_to_v2_preserving_rows_and_sequence() {
+        let path = std::env::temp_dir().join(format!(
+            "mcpanel-db-migrate-test-{}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        {
+            // A database exactly as a v1 install left it, with a row at id 7.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            conn.execute(
+                "INSERT INTO servers (id, name, command) VALUES (7, 'legacy', 'echo')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open(&path).unwrap();
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, MIGRATIONS.len() as i64);
+        let record = get_server(&conn, 7).unwrap();
+        assert_eq!(record.name, "legacy");
+
+        // The INSERT..SELECT must have seeded sqlite_sequence: deleting the
+        // max row and reinserting continues past it instead of reusing 7.
+        delete_server(&conn, 7).unwrap();
+        let recreated = insert_server(&conn, &sample()).unwrap();
+        assert_eq!(recreated.id, 8);
+
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

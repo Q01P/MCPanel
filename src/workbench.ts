@@ -10,6 +10,9 @@ export interface HistoryEntry {
 }
 
 const HISTORY_CAP = 20;
+/** Gateway cap on `?timeout_s=` — mirrored from the backend. */
+export const MAX_TIMEOUT_S = 300;
+export const DEFAULT_TIMEOUT_S = 30;
 let nextSeq = 0;
 
 /** Request templates — the "Postman" starting points. `id` is a placeholder;
@@ -70,9 +73,12 @@ interface WorkbenchState {
   body: string;
   response: string | null;
   pending: boolean;
+  /** Per-request timeout in seconds; slow tools are the point, not an error. */
+  timeoutS: number;
   history: HistoryEntry[];
   setServer: (id: number | null) => void;
   setBody: (body: string) => void;
+  setTimeoutS: (seconds: number) => void;
   restore: (entry: HistoryEntry) => void;
   send: (serverName: string) => Promise<void>;
 }
@@ -82,14 +88,17 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
   body: TEMPLATES[1].body, // tools/list — the most useful first probe
   response: null,
   pending: false,
+  timeoutS: DEFAULT_TIMEOUT_S,
   history: [],
 
   setServer: (id) => set({ serverId: id }),
   setBody: (body) => set({ body }),
+  setTimeoutS: (seconds) =>
+    set({ timeoutS: Math.min(Math.max(Math.round(seconds) || 1, 1), MAX_TIMEOUT_S) }),
   restore: (entry) => set({ serverId: entry.serverId, body: entry.body }),
 
   send: async (serverName) => {
-    const { serverId, body, history } = get();
+    const { serverId, body, history, timeoutS } = get();
     if (serverId == null || get().pending) return;
 
     let payload: unknown;
@@ -103,7 +112,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
     set({ pending: true, response: null });
     try {
       const { url, token } = await gatewayInfo();
-      const res = await fetch(`${url}/mcp/${serverId}`, {
+      const res = await fetch(`${url}/mcp/${serverId}?timeout_s=${timeoutS}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

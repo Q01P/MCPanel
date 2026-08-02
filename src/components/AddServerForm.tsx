@@ -11,6 +11,7 @@ export function AddServerForm() {
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
+  const [autoStart, setAutoStart] = useState(false);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -21,11 +22,12 @@ export function AddServerForm() {
       args: parseArgs(args),
       env: {},
       cwd: null,
-      auto_start: false,
+      auto_start: autoStart,
     });
     setName("");
     setCommand("");
     setArgs("");
+    setAutoStart(false);
   };
 
   return (
@@ -49,6 +51,14 @@ export function AddServerForm() {
           value={args}
           onChange={(e) => setArgs(e.target.value)}
         />
+        <label className="auto-start-field" title="start this server when MCPanel launches">
+          <input
+            type="checkbox"
+            checked={autoStart}
+            onChange={(e) => setAutoStart(e.target.checked)}
+          />
+          auto-start
+        </label>
         <button type="submit">Add</button>
       </div>
     </form>

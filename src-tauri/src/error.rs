@@ -63,10 +63,13 @@ impl AppError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             // The child MCP server is the gateway's upstream.
             Self::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
-            Self::Handshake(_) | Self::Rpc { .. } | Self::ConnectionClosed => {
+            // Json included: malformed request bodies are rejected by axum
+            // before reaching handlers, so a Json error surfacing here means
+            // the *child's* output failed to (de)serialize — upstream fault,
+            // not the caller's.
+            Self::Handshake(_) | Self::Rpc { .. } | Self::ConnectionClosed | Self::Json(_) => {
                 StatusCode::BAD_GATEWAY
             }
-            Self::Json(_) => StatusCode::BAD_REQUEST,
             Self::Io(_) | Self::Db(_) | Self::Keyring(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

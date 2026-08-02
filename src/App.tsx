@@ -16,10 +16,15 @@ export default function App() {
 
   useEffect(() => {
     void load();
-    return connectEvents((event) => {
-      applyEvent(event);
-      ingest(event);
-    });
+    return connectEvents(
+      (event) => {
+        applyEvent(event);
+        ingest(event);
+      },
+      // Every `ready` (first connect and reconnects) resyncs the list:
+      // statuses that changed while the stream was down never replay.
+      () => void load(),
+    );
   }, [load, applyEvent, ingest]);
 
   return (

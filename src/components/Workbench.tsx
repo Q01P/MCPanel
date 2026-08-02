@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { usePanel } from "../store";
-import { TEMPLATES, useWorkbench } from "../workbench";
+import { MAX_TIMEOUT_S, TEMPLATES, useWorkbench } from "../workbench";
 
 const EXTENSIONS = [json()];
 
@@ -20,8 +20,10 @@ export function Workbench() {
   const response = useWorkbench((s) => s.response);
   const pending = useWorkbench((s) => s.pending);
   const history = useWorkbench((s) => s.history);
+  const timeoutS = useWorkbench((s) => s.timeoutS);
   const setServer = useWorkbench((s) => s.setServer);
   const setBody = useWorkbench((s) => s.setBody);
+  const setTimeoutS = useWorkbench((s) => s.setTimeoutS);
   const restore = useWorkbench((s) => s.restore);
   const send = useWorkbench((s) => s.send);
 
@@ -67,6 +69,18 @@ export function Workbench() {
             </option>
           ))}
         </select>
+
+        <label className="timeout-field" title="per-request timeout (seconds)">
+          timeout
+          <input
+            type="number"
+            min={1}
+            max={MAX_TIMEOUT_S}
+            value={timeoutS}
+            onChange={(e) => setTimeoutS(Number(e.target.value))}
+          />
+          s
+        </label>
 
         <button
           className="send-button"

@@ -5,6 +5,7 @@ use dashmap::DashMap;
 use serde::ser::Serializer;
 use serde_json::Value;
 use tokio::sync::{broadcast, watch};
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
 use crate::mcp::process::KillHandle;
@@ -57,6 +58,9 @@ pub enum AppEvent {
     },
     /// A server-initiated JSON-RPC notification, forwarded verbatim.
     Notification { server_id: ServerId, payload: Value },
+    /// Notifications lost to backpressure on the advisory channel — the
+    /// notification analogue of [`AppEvent::LogGap`].
+    NotificationGap { server_id: ServerId, dropped: u64 },
 }
 
 // serde's `rc` feature is deliberately off; log lines stay `Arc<str>` across
@@ -66,10 +70,42 @@ fn serialize_arc_str<S: Serializer>(line: &Arc<str>, serializer: S) -> Result<S:
 }
 
 /// Registry entry for a managed server; `runtime` is present from the
-/// moment the handshake succeeds until the exit waiter observes death.
+/// moment the handshake succeeds until the exit waiter observes death,
+/// `start` from `try_begin_start` until the runtime is installed (or the
+/// start settles without one).
 pub struct ServerEntry {
     pub status: ServerStatus,
     pub runtime: Option<RunningServer>,
+    pub start: Option<StartHandle>,
+}
+
+/// Observer side of an in-flight start: `stop`/`remove` cancel the token and
+/// wait for `settled` before re-inspecting the registry.
+#[derive(Clone)]
+pub struct StartHandle {
+    pub cancel: CancellationToken,
+    /// Flips to true once the start task has written the final status.
+    pub settled: watch::Receiver<bool>,
+}
+
+/// Held by the start task for its whole run. Settles on drop, so every exit
+/// path — including panics — signals waiters, and only after the final
+/// status write.
+pub struct StartGuard {
+    cancel: CancellationToken,
+    settled: watch::Sender<bool>,
+}
+
+impl StartGuard {
+    pub fn token(&self) -> &CancellationToken {
+        &self.cancel
+    }
+}
+
+impl Drop for StartGuard {
+    fn drop(&mut self) {
+        let _ = self.settled.send(true);
+    }
 }
 
 /// Cheaply clonable handles to a live server. The `Child` itself is owned by
@@ -147,6 +183,7 @@ impl AppState {
                 .or_insert_with(|| ServerEntry {
                     status: status.clone(),
                     runtime: None,
+                    start: None,
                 });
         }
         self.publish(AppEvent::StatusChanged {
@@ -158,21 +195,31 @@ impl AppState {
     /// Atomically claim the right to start `id`: succeeds when the server is
     /// absent (Stopped) or Errored, fails while any start/run is in flight —
     /// so concurrent toggles can't double-spawn. On success the status is
-    /// `Starting` and has been broadcast.
-    pub fn try_begin_start(&self, id: ServerId) -> bool {
+    /// `Starting` (broadcast) and a fresh [`StartHandle`] is installed; the
+    /// returned guard must live for the whole start attempt — its drop marks
+    /// the start settled.
+    pub fn try_begin_start(&self, id: ServerId) -> Option<StartGuard> {
+        let cancel = CancellationToken::new();
+        let (settled_tx, settled_rx) = watch::channel(false);
+        let handle = StartHandle {
+            cancel: cancel.clone(),
+            settled: settled_rx,
+        };
         match self.registry.entry(id) {
             dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
                 if !matches!(occupied.get().status, ServerStatus::Errored { .. }) {
-                    return false;
+                    return None;
                 }
                 let entry = occupied.get_mut();
                 entry.status = ServerStatus::Starting;
                 entry.runtime = None;
+                entry.start = Some(handle);
             }
             dashmap::mapref::entry::Entry::Vacant(vacant) => {
                 vacant.insert(ServerEntry {
                     status: ServerStatus::Starting,
                     runtime: None,
+                    start: Some(handle),
                 });
             }
         }
@@ -180,17 +227,46 @@ impl AppState {
             server_id: id,
             status: ServerStatus::Starting,
         });
-        true
+        Some(StartGuard {
+            cancel,
+            settled: settled_tx,
+        })
     }
 
-    pub fn install_runtime(&self, id: ServerId, runtime: RunningServer) {
-        self.registry
-            .entry(id)
-            .and_modify(|entry| entry.runtime = Some(runtime.clone()))
-            .or_insert(ServerEntry {
-                status: ServerStatus::Initializing,
-                runtime: Some(runtime),
+    /// The in-flight start for `id`, if any — present during
+    /// Starting/Initializing until the runtime is installed.
+    pub fn start_handle(&self, id: ServerId) -> Option<StartHandle> {
+        self.registry.get(&id).and_then(|entry| entry.start.clone())
+    }
+
+    /// Promote a successfully-handshaken start to Running. Decided atomically
+    /// under the entry lock: succeeds only while the entry still holds an
+    /// uncancelled start handle, so a concurrent `stop`/`remove` (which
+    /// cancels first) can never be resurrected by a late install. On failure
+    /// the caller owns the child and must kill it.
+    pub fn try_install_runtime(&self, id: ServerId, runtime: RunningServer) -> bool {
+        let installed = match self.registry.entry(id) {
+            dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
+                let entry = occupied.get_mut();
+                match &entry.start {
+                    Some(start) if !start.cancel.is_cancelled() => {
+                        entry.runtime = Some(runtime);
+                        entry.start = None;
+                        entry.status = ServerStatus::Running;
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            dashmap::mapref::entry::Entry::Vacant(_) => false,
+        };
+        if installed {
+            self.publish(AppEvent::StatusChanged {
+                server_id: id,
+                status: ServerStatus::Running,
             });
+        }
+        installed
     }
 
     pub fn runtime(&self, id: ServerId) -> Option<RunningServer> {
@@ -246,6 +322,48 @@ mod tests {
         state.set_status(1, ServerStatus::Stopped);
         assert_eq!(state.status(1), ServerStatus::Stopped);
         assert!(state.registry.is_empty());
+    }
+
+    #[test]
+    fn start_guard_settles_on_drop_and_blocks_double_start() {
+        let state = state();
+
+        let guard = state.try_begin_start(1).expect("first claim");
+        assert_eq!(state.status(1), ServerStatus::Starting);
+        let handle = state.start_handle(1).expect("handle during Starting");
+        assert!(!*handle.settled.borrow());
+
+        // A second claim while a start is in flight must fail.
+        assert!(state.try_begin_start(1).is_none());
+
+        drop(guard);
+        assert!(*handle.settled.borrow(), "drop settles the start");
+    }
+
+    #[test]
+    fn stopped_clears_the_start_handle() {
+        let state = state();
+        let _guard = state.try_begin_start(1).expect("claim");
+        assert!(state.start_handle(1).is_some());
+
+        state.set_status(1, ServerStatus::Stopped);
+        assert!(state.start_handle(1).is_none());
+        assert!(state.registry.is_empty());
+    }
+
+    #[test]
+    fn errored_entry_can_be_reclaimed_with_a_fresh_handle() {
+        let state = state();
+        let guard = state.try_begin_start(1).expect("claim");
+        guard.token().cancel();
+        state.set_status(1, ServerStatus::Errored { message: "boom".into() });
+        drop(guard);
+
+        let fresh = state.try_begin_start(1).expect("reclaim after Errored");
+        assert!(
+            !fresh.token().is_cancelled(),
+            "reclaim must install a fresh, uncancelled token"
+        );
     }
 
     #[test]
