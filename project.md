@@ -208,9 +208,9 @@ tasks** — do not scaffold ahead of the agreed task.
 - [x] **T5** — `mcp/protocol.rs`: JSON-RPC correlation + initialize handshake
 - [x] **T6** — `db/`: rusqlite store, migrations, server CRUD
 - [x] **T7** — `commands/`: Tauri IPC (list/add/update/remove/start/stop)
-- [ ] **T8** — `server/`: full gateway (`/sse`, `/mcp/{server_id}`, timeouts)
-      ← **next**
+- [x] **T8** — `server/`: full gateway (`/sse`, `/mcp/{server_id}`, timeouts)
 - [ ] **T9** — Secrets: keyring integration, just-in-time resolution, redaction
+      ← **next**
 - [ ] **T10** — Frontend: Vite scaffold, server list + toggles + status badges
 - [ ] **T11** — Frontend: virtualized log viewer (follow-tail, dropped-lines
       marker)

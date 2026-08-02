@@ -1,0 +1,98 @@
+//! Full-stack gateway test: a real fixture server driven end-to-end through
+//! `POST /mcp/{server_id}` (spec §3 gateway).
+
+#![cfg(unix)]
+
+use std::collections::BTreeMap;
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode, header};
+use serde_json::{Value, json};
+use tower::ServiceExt;
+
+use mcpanel_lib::commands::lifecycle;
+use mcpanel_lib::db::{self, NewServer};
+use mcpanel_lib::server::{AuthToken, Gateway, router};
+use mcpanel_lib::state::AppState;
+
+async fn body_json(response: axum::response::Response) -> Value {
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("read body");
+    serde_json::from_slice(&bytes).expect("json body")
+}
+
+fn post(gateway: &Gateway, server_id: i64, payload: Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(format!("/mcp/{server_id}"))
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", gateway.token.expose()),
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(payload.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn forwards_jsonrpc_to_a_running_server() {
+    let gateway = Gateway {
+        token: AuthToken::generate(),
+        app: AppState::new(db::open_in_memory().expect("db")),
+    };
+
+    let id = lifecycle::add(
+        &gateway.app,
+        NewServer {
+            name: "gw".into(),
+            command: env!("CARGO_BIN_EXE_mock-mcp-server").into(),
+            args: vec![],
+            env: BTreeMap::new(),
+            cwd: None,
+            auto_start: false,
+        },
+    )
+    .await
+    .expect("add")
+    .id;
+    lifecycle::start(&gateway.app, id).await.expect("start");
+
+    // Request: caller id echoed, result forwarded.
+    let response = router(gateway.clone())
+        .oneshot(post(&gateway, id, json!({"jsonrpc":"2.0","id":7,"method":"ping","params":{}})))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(response).await,
+        json!({"jsonrpc":"2.0","id":7,"result":{}})
+    );
+
+    // RPC errors come back as JSON-RPC envelopes, not HTTP errors.
+    let response = router(gateway.clone())
+        .oneshot(post(&gateway, id, json!({"id":8,"method":"bogus/method"})))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let error_body = body_json(response).await;
+    assert_eq!(error_body["id"], 8);
+    assert_eq!(error_body["error"]["code"], -32601);
+
+    // Notifications (no id) are accepted fire-and-forget.
+    let response = router(gateway.clone())
+        .oneshot(post(&gateway, id, json!({"method":"notifications/whatever"})))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await, json!({"accepted": true}));
+
+    lifecycle::stop(&gateway.app, id).await.expect("stop");
+
+    // Stopped server → 404 on the same route.
+    let response = router(gateway.clone())
+        .oneshot(post(&gateway, id, json!({"id":9,"method":"ping"})))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}

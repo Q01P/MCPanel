@@ -1,19 +1,33 @@
+//! Token-guarded local gateway on `127.0.0.1:6789` (loopback bind is what
+//! rejects non-local clients): `GET /sse` streams state changes + log lines,
+//! `POST /mcp/{server_id}` forwards JSON-RPC to a running server's stdin,
+//! with a 30 s tower timeout on POSTs.
+
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
-use axum::Router;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::get;
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use ring::rand::{SecureRandom, SystemRandom};
+use serde_json::{Value, json};
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::{Stream, StreamExt};
+use tower::ServiceBuilder;
 use tracing::{error, info};
 
 use crate::error::{AppError, AppResult};
+use crate::state::{AppState, ServerId};
 
 /// Loopback bind is what rejects non-local clients.
 pub const GATEWAY_ADDR: &str = "127.0.0.1:6789";
+
+/// tower timeout on `POST /mcp/{server_id}` (spec §3).
+pub const POST_TIMEOUT: Duration = Duration::from_secs(30);
 
 const TOKEN_BYTES: usize = 32;
 
@@ -51,10 +65,16 @@ impl AuthToken {
             == 0
     }
 
-    /// For handing to the UI (T7); do not log.
+    /// For handing to the UI (T10); do not log.
     pub fn expose(&self) -> &str {
         &self.0
     }
+}
+
+#[derive(Clone)]
+pub struct Gateway {
+    pub token: AuthToken,
+    pub app: AppState,
 }
 
 /// Accepts `Authorization: Bearer <token>` or, for `EventSource` clients that
@@ -72,28 +92,101 @@ fn authorize(headers: &HeaderMap, query_token: Option<&str>, token: &AuthToken) 
 }
 
 #[derive(serde::Deserialize)]
-struct SseQuery {
+struct TokenQuery {
     token: Option<String>,
 }
 
-/// Stub: one `ready` event, then keep-alives. Real state-change and log-line
-/// fan-out lands in T8.
-async fn sse_stub(
-    State(token): State<AuthToken>,
+/// `GET /sse`: a `ready` event, then every [`crate::state::AppEvent`]
+/// pre-serialized to JSON. A lagged subscriber gets a `lagged` marker instead
+/// of silently missing events.
+async fn sse_events(
+    State(gateway): State<Gateway>,
     headers: HeaderMap,
-    Query(query): Query<SseQuery>,
+    Query(query): Query<TokenQuery>,
 ) -> AppResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
-    authorize(&headers, query.token.as_deref(), &token)?;
-    let stream =
-        tokio_stream::once(Ok(Event::default().event("ready").data("{}"))).chain(tokio_stream::pending());
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    authorize(&headers, query.token.as_deref(), &gateway.token)?;
+
+    let events = BroadcastStream::new(gateway.app.subscribe()).map(|item| {
+        let payload = match item {
+            Ok(event) => serde_json::to_string(&event)
+                .unwrap_or_else(|_| r#"{"type":"serialize_error"}"#.into()),
+            Err(BroadcastStreamRecvError::Lagged(missed)) => {
+                format!(r#"{{"type":"lagged","missed":{missed}}}"#)
+            }
+        };
+        Ok(Event::default().event("app").data(payload))
+    });
+    let ready = tokio_stream::once(Ok(Event::default().event("ready").data("{}")));
+
+    Ok(Sse::new(ready.chain(events)).keep_alive(KeepAlive::default()))
 }
 
-pub fn router(token: AuthToken) -> Router {
-    Router::new().route("/sse", get(sse_stub)).with_state(token)
+/// The JSON-RPC workbench payload. The gateway re-correlates: the child sees
+/// our own monotonic ids, and the caller's `id` is echoed back in the
+/// envelope.
+#[derive(serde::Deserialize)]
+struct ForwardRequest {
+    method: String,
+    #[serde(default)]
+    params: Value,
+    id: Option<Value>,
 }
 
-pub async fn serve(token: AuthToken) {
+/// `POST /mcp/{server_id}`: forward JSON-RPC to a *running* server. RPC-level
+/// errors come back as JSON-RPC error envelopes (the workbench wants to
+/// inspect them); transport-level failures surface as HTTP errors.
+async fn mcp_forward(
+    State(gateway): State<Gateway>,
+    Path(server_id): Path<ServerId>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(request): Json<ForwardRequest>,
+) -> AppResult<Json<Value>> {
+    authorize(&headers, query.token.as_deref(), &gateway.token)?;
+
+    let runtime = gateway
+        .app
+        .runtime(server_id)
+        .ok_or_else(|| AppError::ServerNotFound(server_id.to_string()))?;
+
+    let Some(caller_id) = request.id else {
+        runtime.client.notify(&request.method, request.params).await?;
+        return Ok(Json(json!({ "accepted": true })));
+    };
+
+    match runtime.client.request(&request.method, request.params).await {
+        Ok(result) => Ok(Json(json!({
+            "jsonrpc": "2.0",
+            "id": caller_id,
+            "result": result,
+        }))),
+        Err(AppError::Rpc { code, message }) => Ok(Json(json!({
+            "jsonrpc": "2.0",
+            "id": caller_id,
+            "error": { "code": code, "message": message },
+        }))),
+        Err(other) => Err(other),
+    }
+}
+
+pub fn router(gateway: Gateway) -> Router {
+    let forward = post(mcp_forward).layer(
+        ServiceBuilder::new()
+            .layer(axum::error_handling::HandleErrorLayer::new(
+                |_: tower::BoxError| async {
+                    AppError::Timeout("gateway request".to_string())
+                },
+            ))
+            .layer(tower::timeout::TimeoutLayer::new(POST_TIMEOUT)),
+    );
+
+    Router::new()
+        .route("/sse", get(sse_events))
+        .route("/mcp/{server_id}", forward)
+        .with_state(gateway)
+}
+
+pub async fn serve(gateway: Gateway) {
     let listener = match tokio::net::TcpListener::bind(GATEWAY_ADDR).await {
         Ok(listener) => listener,
         Err(error) => {
@@ -102,7 +195,7 @@ pub async fn serve(token: AuthToken) {
         }
     };
     info!(target: "app::server", "gateway listening on {GATEWAY_ADDR}");
-    if let Err(error) = axum::serve(listener, router(token)).await {
+    if let Err(error) = axum::serve(listener, router(gateway)).await {
         error!(target: "app::server", %error, "gateway server error");
     }
 }
@@ -114,6 +207,14 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+    use crate::db;
+
+    fn test_gateway() -> Gateway {
+        Gateway {
+            token: AuthToken::generate(),
+            app: AppState::new(db::open_in_memory().unwrap()),
+        }
+    }
 
     #[test]
     fn tokens_are_unique_and_self_matching() {
@@ -124,42 +225,76 @@ mod tests {
         assert!(!a.matches(b.expose()));
     }
 
-    async fn sse_status(request: Request<Body>, token: &AuthToken) -> StatusCode {
-        router(token.clone()).oneshot(request).await.unwrap().status()
+    async fn status_of(gateway: &Gateway, request: Request<Body>) -> StatusCode {
+        router(gateway.clone())
+            .oneshot(request)
+            .await
+            .unwrap()
+            .status()
     }
 
     #[tokio::test]
     async fn sse_rejects_missing_and_wrong_tokens() {
-        let token = AuthToken::generate();
+        let gateway = test_gateway();
         let missing = Request::builder().uri("/sse").body(Body::empty()).unwrap();
-        assert_eq!(sse_status(missing, &token).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(status_of(&gateway, missing).await, StatusCode::UNAUTHORIZED);
 
         let wrong = Request::builder()
             .uri("/sse?token=deadbeef")
             .body(Body::empty())
             .unwrap();
-        assert_eq!(sse_status(wrong, &token).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(status_of(&gateway, wrong).await, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
     async fn sse_accepts_query_token_and_bearer_header() {
-        let token = AuthToken::generate();
+        let gateway = test_gateway();
         let via_query = Request::builder()
-            .uri(format!("/sse?token={}", token.expose()))
+            .uri(format!("/sse?token={}", gateway.token.expose()))
             .body(Body::empty())
             .unwrap();
-        assert_eq!(sse_status(via_query, &token).await, StatusCode::OK);
+        assert_eq!(status_of(&gateway, via_query).await, StatusCode::OK);
 
         let via_header = Request::builder()
             .uri("/sse")
-            .header(header::AUTHORIZATION, format!("Bearer {}", token.expose()))
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", gateway.token.expose()),
+            )
             .body(Body::empty())
             .unwrap();
-        let response = router(token.clone()).oneshot(via_header).await.unwrap();
+        let response = router(gateway.clone()).oneshot(via_header).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers()[header::CONTENT_TYPE],
             "text/event-stream"
         );
+    }
+
+    #[tokio::test]
+    async fn mcp_post_requires_token_and_running_server() {
+        let gateway = test_gateway();
+        let unauthorized = Request::builder()
+            .method("POST")
+            .uri("/mcp/1")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"method":"ping","id":1}"#))
+            .unwrap();
+        assert_eq!(
+            status_of(&gateway, unauthorized).await,
+            StatusCode::UNAUTHORIZED
+        );
+
+        let not_running = Request::builder()
+            .method("POST")
+            .uri("/mcp/1")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", gateway.token.expose()),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"method":"ping","id":1}"#))
+            .unwrap();
+        assert_eq!(status_of(&gateway, not_running).await, StatusCode::NOT_FOUND);
     }
 }

@@ -24,10 +24,13 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let conn = db::open(&data_dir.join("mcpanel.sqlite"))?;
-            app.manage(state::AppState::new(conn));
+            let app_state = state::AppState::new(conn);
+            app.manage(app_state.clone());
 
-            let token = server::AuthToken::generate();
-            tauri::async_runtime::spawn(server::serve(token));
+            tauri::async_runtime::spawn(server::serve(server::Gateway {
+                token: server::AuthToken::generate(),
+                app: app_state,
+            }));
             info!(target: "app", "MCPanel starting; gateway spawning on {}", server::GATEWAY_ADDR);
             Ok(())
         })
