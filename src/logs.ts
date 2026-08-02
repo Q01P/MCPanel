@@ -16,6 +16,15 @@ let nextSeq = 0;
 let pending: { id: number; entry: LogEntry }[] = [];
 let flushTimer: number | undefined;
 
+/** Test-only: the batching state above outlives the store between test
+ * cases; reset it so a pending flush can't leak across tests. */
+export function resetLogBatching() {
+  window.clearTimeout(flushTimer);
+  flushTimer = undefined;
+  pending = [];
+  nextSeq = 0;
+}
+
 interface LogsState {
   byServer: Record<number, LogEntry[]>;
   selected: number | null;
@@ -71,9 +80,12 @@ export const useLogs = create<LogsState>((set, get) => ({
         set((state) => {
           const grouped = new Map<number, LogEntry[]>();
           for (const { id, entry } of batch) {
-            let bucket = grouped.get(id);
-            if (!bucket) grouped.set(id, (bucket = []));
-            bucket.push(entry);
+            const bucket = grouped.get(id);
+            if (bucket) {
+              bucket.push(entry);
+            } else {
+              grouped.set(id, [entry]);
+            }
           }
           const byServer = { ...state.byServer };
           for (const [id, entries] of grouped) {

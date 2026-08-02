@@ -77,6 +77,29 @@ jobs:
           echo "release binary: $(( size / 1024 )) KiB of 15360 KiB budget" >> "$GITHUB_STEP_SUMMARY"
           [ "$size" -lt 15728640 ] || { echo "size budget exceeded"; exit 1; }
 
+  # Platform-independent, so one leg is enough.
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
   # rust-version = "1.85" is declared in Cargo.toml; build it or it drifts.
   msrv:
     runs-on: ubuntu-latest

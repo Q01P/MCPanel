@@ -41,12 +41,14 @@ export function LogViewer() {
   const [follow, setFollow] = useState(true);
   const [scrollTop, setScrollTop] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(entries): every new batch must re-pin the scroll to the tail
   useEffect(() => {
     if (follow && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [entries, follow]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(selected): switching servers is what triggers the reset
   useEffect(() => {
     // New selection: restart pinned to the tail.
     setFollow(true);

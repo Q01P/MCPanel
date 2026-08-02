@@ -1,0 +1,16 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
+  // Lint only — the codebase keeps its existing formatting style.
+  "formatter": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      // Known gaps (unlabeled controls, invisible focus) are queued for the
+      // dedicated accessibility pass; enable this group when it lands.
+      "a11y": "off"
+    }
+  }
+}
