@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      # Debug profile on purpose: the release profile's panic = "abort"
+      # breaks #[should_panic]-style tests.
+      - name: Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Release build
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml
+
+      - name: Size budget (< 15 MB)
+        shell: bash
+        run: |
+          bin="src-tauri/target/release/mcpanel"
+          [ -f "$bin.exe" ] && bin="$bin.exe"
+          size=$(wc -c < "$bin")
+          echo "release binary: $size bytes ($(( size / 1024 / 1024 )) MB)"
+          [ "$size" -lt 15728640 ] || { echo "size budget exceeded"; exit 1; }

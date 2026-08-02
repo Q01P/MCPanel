@@ -214,8 +214,8 @@ tasks** — do not scaffold ahead of the agreed task.
 - [x] **T11** — Frontend: virtualized log viewer (follow-tail, dropped-lines
       marker)
 - [x] **T12** — Frontend: JSON workbench (CodeMirror 6, templates, history)
-- [ ] **T13** — Packaging: bundling on, icons, CI (3-OS matrix), release
-      workflow, size budget check  ← **next**
+- [x] **T13** — Packaging: bundling on, icons, CI (3-OS matrix), release
+      workflow, size budget check
 
 ## 6. Development
 
