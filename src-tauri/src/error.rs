@@ -34,6 +34,9 @@ pub enum AppError {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("credential store error: {0}")]
+    Keyring(#[from] keyring::Error),
 }
 
 impl AppError {
@@ -50,6 +53,7 @@ impl AppError {
             Self::Io(_) => "io",
             Self::Db(_) => "db",
             Self::Json(_) => "json",
+            Self::Keyring(_) => "keyring",
         }
     }
 
@@ -63,7 +67,7 @@ impl AppError {
                 StatusCode::BAD_GATEWAY
             }
             Self::Json(_) => StatusCode::BAD_REQUEST,
-            Self::Io(_) | Self::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Io(_) | Self::Db(_) | Self::Keyring(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

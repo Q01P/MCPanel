@@ -209,9 +209,9 @@ tasks** — do not scaffold ahead of the agreed task.
 - [x] **T6** — `db/`: rusqlite store, migrations, server CRUD
 - [x] **T7** — `commands/`: Tauri IPC (list/add/update/remove/start/stop)
 - [x] **T8** — `server/`: full gateway (`/sse`, `/mcp/{server_id}`, timeouts)
-- [ ] **T9** — Secrets: keyring integration, just-in-time resolution, redaction
-      ← **next**
+- [x] **T9** — Secrets: keyring integration, just-in-time resolution, redaction
 - [ ] **T10** — Frontend: Vite scaffold, server list + toggles + status badges
+      ← **next**
 - [ ] **T11** — Frontend: virtualized log viewer (follow-tail, dropped-lines
       marker)
 - [ ] **T12** — Frontend: JSON workbench (CodeMirror 6, templates, history)

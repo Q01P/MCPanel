@@ -59,3 +59,29 @@ pub async fn stop_server(state: State<'_, AppState>, id: ServerId) -> AppResult<
     info!(target: "app::commands", id, "stop_server");
     lifecycle::stop(&state, id).await
 }
+
+// Secret values are redacted by construction: never logged (key only,
+// `skip(value)`), never echoed back, never written to the DB.
+
+#[tauri::command]
+#[tracing::instrument(target = "app::commands", skip(state, value))]
+pub async fn set_server_secret(
+    state: State<'_, AppState>,
+    id: ServerId,
+    key: String,
+    value: String,
+) -> AppResult<()> {
+    info!(target: "app::commands", id, key = %key, "set_server_secret");
+    lifecycle::set_secret(&state, id, key, value).await
+}
+
+#[tauri::command]
+#[tracing::instrument(target = "app::commands", skip(state))]
+pub async fn delete_server_secret(
+    state: State<'_, AppState>,
+    id: ServerId,
+    key: String,
+) -> AppResult<()> {
+    info!(target: "app::commands", id, key = %key, "delete_server_secret");
+    lifecycle::delete_secret(&state, id, key).await
+}

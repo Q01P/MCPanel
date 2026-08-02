@@ -4,13 +4,11 @@
 //! Plain functions over `AppState` so the whole lifecycle is testable
 //! without a webview.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
-use tracing::warn;
 
 use crate::db::{self, EnvValue, NewServer, ServerRecord};
 use crate::error::{AppError, AppResult};
@@ -96,10 +94,18 @@ async fn run_startup(
 ) -> AppResult<()> {
     let record = state.with_db(move |conn| db::get_server(conn, id)).await?;
 
+    // Secret resolution hits the OS credential store (blocking) and happens
+    // just-in-time — the resolved values exist only in the child's spawn
+    // config, never in state, DB, or logs.
+    let env_record = record.clone();
+    let env = tokio::task::spawn_blocking(move || crate::secrets::resolve_env(&env_record))
+        .await
+        .map_err(|join| AppError::Io(std::io::Error::other(join)))??;
+
     let config = ProcessConfig {
         command: record.command.clone(),
         args: record.args.clone(),
-        env: resolve_env(&record),
+        env,
         cwd: record.cwd.clone().map(Into::into),
     };
 
@@ -201,20 +207,47 @@ pub async fn stop(state: &AppState, id: ServerId) -> AppResult<()> {
     Ok(())
 }
 
-/// T9 replaces the `Secret` arm with just-in-time keyring resolution; until
-/// then secret-marked entries are skipped (never logged, never guessed).
-fn resolve_env(record: &ServerRecord) -> HashMap<String, String> {
-    record
-        .env
-        .iter()
-        .filter_map(|(key, value)| match value {
-            EnvValue::Plain { value } => Some((key.clone(), value.clone())),
-            EnvValue::Secret => {
-                warn!(target: "app::commands", key = %key, "secret env resolution lands in T9; skipping");
-                None
-            }
-        })
-        .collect()
+/// Store a secret value in the OS credential store and mark the key as
+/// secret in the server's env config. The value itself never touches the DB.
+pub async fn set_secret(
+    state: &AppState,
+    id: ServerId,
+    key: String,
+    value: String,
+) -> AppResult<()> {
+    let mut record = state.with_db(move |conn| db::get_server(conn, id)).await?;
+
+    let name = record.name.clone();
+    let store_key = key.clone();
+    tokio::task::spawn_blocking(move || crate::secrets::store_secret(&name, &store_key, &value))
+        .await
+        .map_err(|join| AppError::Io(std::io::Error::other(join)))??;
+
+    if record.env.get(&key) != Some(&EnvValue::Secret) {
+        record.env.insert(key, EnvValue::Secret);
+        state
+            .with_db(move |conn| db::update_server(conn, &record))
+            .await?;
+    }
+    Ok(())
+}
+
+/// Remove a secret from the credential store and drop its env marker.
+pub async fn delete_secret(state: &AppState, id: ServerId, key: String) -> AppResult<()> {
+    let mut record = state.with_db(move |conn| db::get_server(conn, id)).await?;
+
+    let name = record.name.clone();
+    let delete_key = key.clone();
+    tokio::task::spawn_blocking(move || crate::secrets::delete_secret(&name, &delete_key))
+        .await
+        .map_err(|join| AppError::Io(std::io::Error::other(join)))??;
+
+    if record.env.remove(&key).is_some() {
+        state
+            .with_db(move |conn| db::update_server(conn, &record))
+            .await?;
+    }
+    Ok(())
 }
 
 async fn fan_out_lines(
