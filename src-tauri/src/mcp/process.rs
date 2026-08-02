@@ -99,6 +99,11 @@ pub struct ManagedChild {
 impl ManagedChild {
     /// Graceful stop per spec: signal, wait [`SHUTDOWN_GRACE`], then hard-kill
     /// and reap.
+    ///
+    /// Test-facing convenience only: production stops go through
+    /// `commands::lifecycle::stop`, which re-implements this policy against
+    /// the `exited` watch because the exit-waiter task owns the `Child`
+    /// there. Keep the two sequences aligned when changing either.
     pub async fn shutdown(&mut self) -> AppResult<()> {
         self.kill.signal_graceful();
         match tokio::time::timeout(SHUTDOWN_GRACE, self.child.wait()).await {

@@ -79,7 +79,7 @@ impl AuthToken {
             == 0
     }
 
-    /// For handing to the UI (T10); do not log.
+    /// For handing to the UI; do not log.
     pub fn expose(&self) -> &str {
         &self.0
     }
@@ -181,6 +181,15 @@ struct ForwardQuery {
     timeout_s: Option<u64>,
 }
 
+/// Clamp the caller's `?timeout_s=` to `1..=MAX_FORWARD_TIMEOUT` (spec §3);
+/// absent means the protocol default. Always strictly below the tower
+/// backstop, so the two can never race.
+fn forward_timeout(timeout_s: Option<u64>) -> Duration {
+    timeout_s
+        .map(|s| Duration::from_secs(s.clamp(1, MAX_FORWARD_TIMEOUT.as_secs())))
+        .unwrap_or(crate::mcp::protocol::DEFAULT_REQUEST_TIMEOUT)
+}
+
 /// `POST /mcp/{server_id}`: forward JSON-RPC to a *running* server. RPC-level
 /// errors come back as JSON-RPC error envelopes (the workbench wants to
 /// inspect them); transport-level failures surface as HTTP errors.
@@ -206,10 +215,7 @@ async fn mcp_forward(
         return Ok(Json(json!({ "accepted": true })));
     };
 
-    let timeout = query
-        .timeout_s
-        .map(|s| Duration::from_secs(s.clamp(1, MAX_FORWARD_TIMEOUT.as_secs())))
-        .unwrap_or(crate::mcp::protocol::DEFAULT_REQUEST_TIMEOUT);
+    let timeout = forward_timeout(query.timeout_s);
     match runtime
         .client
         .request_with_timeout(&request.method, request.params, timeout)
@@ -229,6 +235,10 @@ async fn mcp_forward(
     }
 }
 
+// Auth is a per-handler call (`authorize` first statement), not middleware —
+// the two routes accept the token from different places. Any route added
+// here MUST call `authorize` and be added to the
+// `every_route_rejects_unauthenticated_requests` test below.
 pub fn router(gateway: Gateway) -> Router {
     let forward = post(mcp_forward).layer(
         ServiceBuilder::new()
@@ -430,6 +440,106 @@ mod tests {
             status_of(&gateway, not_running).await,
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[test]
+    fn forward_timeout_clamps_to_gateway_bounds() {
+        use crate::mcp::protocol::DEFAULT_REQUEST_TIMEOUT;
+        assert_eq!(forward_timeout(None), DEFAULT_REQUEST_TIMEOUT);
+        assert_eq!(forward_timeout(Some(0)), Duration::from_secs(1));
+        assert_eq!(forward_timeout(Some(1)), Duration::from_secs(1));
+        assert_eq!(forward_timeout(Some(42)), Duration::from_secs(42));
+        assert_eq!(forward_timeout(Some(300)), MAX_FORWARD_TIMEOUT);
+        assert_eq!(forward_timeout(Some(u64::MAX)), MAX_FORWARD_TIMEOUT);
+        // The clamp ceiling must stay strictly below the tower backstop.
+        assert!(MAX_FORWARD_TIMEOUT < GATEWAY_BACKSTOP_TIMEOUT);
+    }
+
+    /// The structural guard `router()`'s comment points at: every registered
+    /// route, hit without credentials, must 401. Extend this list whenever a
+    /// route is added.
+    #[tokio::test]
+    async fn every_route_rejects_unauthenticated_requests() {
+        let gateway = test_gateway();
+        let routes = [("GET", "/sse"), ("POST", "/mcp/1")];
+        for (method, uri) in routes {
+            let request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header(header::HOST, TEST_HOST)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"method":"ping","id":1}"#))
+                .unwrap();
+            assert_eq!(
+                status_of(&gateway, request).await,
+                StatusCode::UNAUTHORIZED,
+                "{method} {uri} must reject an unauthenticated request"
+            );
+        }
+    }
+
+    /// SSE end-to-end over the response body: `ready` first, then published
+    /// events as `event: app` frames, and a `lagged` marker when the
+    /// subscriber falls behind the broadcast channel.
+    #[tokio::test]
+    async fn sse_delivers_ready_events_and_lagged_markers() {
+        use crate::state::{AppEvent, ServerStatus};
+        use tokio_stream::StreamExt;
+
+        let gateway = test_gateway();
+        let request = Request::builder()
+            .uri(format!("/sse?token={}", gateway.token.expose()))
+            .header(header::HOST, TEST_HOST)
+            .body(Body::empty())
+            .unwrap();
+        let response = router(gateway.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+        let mut seen = String::new();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        async fn read_until(
+            body: &mut axum::body::BodyDataStream,
+            seen: &mut String,
+            needle: &str,
+            deadline: tokio::time::Instant,
+        ) {
+            while !seen.contains(needle) {
+                let chunk = tokio::time::timeout_at(deadline, StreamExt::next(body))
+                    .await
+                    .expect("chunk within deadline")
+                    .expect("stream open")
+                    .expect("chunk ok");
+                seen.push_str(&String::from_utf8_lossy(&chunk));
+            }
+        }
+
+        // 1. The ready event opens every subscription.
+        read_until(&mut body, &mut seen, "event: ready", deadline).await;
+        assert!(
+            !seen.contains("event: app"),
+            "no app events before ready: {seen}"
+        );
+
+        // 2. A published AppEvent arrives serialized under `event: app`.
+        gateway.app.publish(AppEvent::StatusChanged {
+            server_id: 7,
+            status: ServerStatus::Running,
+        });
+        read_until(&mut body, &mut seen, r#""type":"status_changed""#, deadline).await;
+        assert!(seen.contains("event: app"), "app frame present: {seen}");
+        assert!(seen.contains(r#""server_id":7"#), "payload intact: {seen}");
+
+        // 3. Overflow the broadcast channel while the body sits unpolled —
+        //    the loss must surface as a lagged marker, not silence.
+        for i in 0..2000u64 {
+            gateway.app.publish(AppEvent::LogGap {
+                server_id: 7,
+                stream: crate::state::LogStream::Stdout,
+                dropped: i,
+            });
+        }
+        read_until(&mut body, &mut seen, r#""type":"lagged""#, deadline).await;
     }
 
     #[tokio::test]

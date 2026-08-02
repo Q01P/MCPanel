@@ -269,12 +269,25 @@ async fn run_startup(
     };
 
     let mut managed = spawn(&config)?;
-    let streams = attach(&mut managed.child)?;
-    let stdin = managed
-        .child
-        .stdin
-        .take()
-        .ok_or_else(|| std::io::Error::other("child stdin not piped"))?;
+    // From here every failure path must kill the *tree* explicitly:
+    // `kill_on_drop` only covers the direct child, and orphaned
+    // grandchildren are the one thing this module exists to prevent.
+    let wired = attach(&mut managed.child).and_then(|streams| {
+        let stdin = managed
+            .child
+            .stdin
+            .take()
+            .ok_or_else(|| std::io::Error::other("child stdin not piped"))?;
+        Ok((streams, stdin))
+    });
+    let (streams, stdin) = match wired {
+        Ok(wired) => wired,
+        Err(error) => {
+            managed.kill.kill_now();
+            let _ = tokio::time::timeout(KILL_CONFIRM_TIMEOUT, managed.child.wait()).await;
+            return Err(error);
+        }
+    };
     let ManagedChild {
         pid,
         mut child,
@@ -316,8 +329,11 @@ async fn run_startup(
             Ok(handshake) => handshake,
             Err(error) => {
                 // Handshake failure/timeout ⇒ tear the process tree down.
+                // Bounded like the other teardown sites: an unreapable child
+                // here would wedge the start task — and with it every later
+                // stop, which waits on the StartGuard.
                 kill.kill_now();
-                let _ = child.wait().await;
+                let _ = tokio::time::timeout(KILL_CONFIRM_TIMEOUT, child.wait()).await;
                 return Err(error);
             }
         },

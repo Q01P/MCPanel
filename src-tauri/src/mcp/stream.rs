@@ -29,7 +29,7 @@ pub enum StreamEvent {
     Line(Arc<str>),
     /// Lines lost since the last delivered event — backpressure drops and
     /// over-length discards combined. The UI renders this as a
-    /// dropped-lines marker (T11).
+    /// dropped-lines marker.
     Dropped(u64),
 }
 

@@ -63,9 +63,11 @@ jobs:
 
       # One leg is enough for the size budget; the debug test build above
       # already compiles every platform's code.
+      # --bin mcpanel: the fixture bins (mock-mcp-server, orphan-harness)
+      # are test-only and have no place in a release-profile build.
       - name: Release build
         if: runner.os == 'Linux'
-        run: cargo build --release --locked --manifest-path src-tauri/Cargo.toml
+        run: cargo build --release --locked --manifest-path src-tauri/Cargo.toml --bin mcpanel
 
       - name: Size budget (< 15 MB)
         if: runner.os == 'Linux'

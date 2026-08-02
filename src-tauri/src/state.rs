@@ -50,7 +50,7 @@ pub enum AppEvent {
         line: Arc<str>,
     },
     /// Lines lost to backpressure or the line-length cap; the log viewer
-    /// renders this as a dropped-lines marker (T11).
+    /// renders this as a dropped-lines marker.
     LogGap {
         server_id: ServerId,
         stream: LogStream,
@@ -173,7 +173,9 @@ impl AppState {
         self.config_write.lock().await
     }
 
-    pub fn db(&self) -> Arc<Mutex<rusqlite::Connection>> {
+    /// Private on purpose: handing the raw connection out would invite
+    /// callers to bypass the `spawn_blocking` rule `with_db` enforces.
+    fn db(&self) -> Arc<Mutex<rusqlite::Connection>> {
         Arc::clone(&self.db)
     }
 
