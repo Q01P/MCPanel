@@ -82,11 +82,12 @@ export function LogViewer() {
           </span>
         )}
         {!follow && (
-          <button className="log-follow" onClick={() => setFollow(true)}>
+          <button type="button" className="log-follow" onClick={() => setFollow(true)}>
             ⤓ follow
           </button>
         )}
         <button
+          type="button"
           className="log-close"
           aria-label="close logs"
           onClick={() => select(null)}

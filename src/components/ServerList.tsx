@@ -34,17 +34,28 @@ function ServerRow({ server }: { server: ServerOverview }) {
         <span className="server-command">
           {server.command} {server.args.join(" ")}
         </span>
+        {server.status.state === "errored" && (
+          // The reason must be readable, not hover-only via `title` —
+          // keyboard and screen-reader users never see a tooltip.
+          <span className="server-error" role="status">
+            {server.status.message}
+          </span>
+        )}
       </div>
       <StatusBadge status={server.status} />
       <label className={`switch${busy ? " switch-busy" : ""}`}>
         <input
           type="checkbox"
+          role="switch"
+          aria-label={`run ${server.name}`}
+          aria-checked={running || busy}
           checked={running || busy}
           onChange={(e) => void toggle(server.id, e.target.checked)}
         />
         <span className="slider" />
       </label>
       <button
+        type="button"
         className={`logs-button${logsOpen ? " logs-button-active" : ""}`}
         title="Show logs"
         onClick={() => selectLogs(logsOpen ? null : server.id)}
@@ -52,9 +63,16 @@ function ServerRow({ server }: { server: ServerOverview }) {
         logs
       </button>
       <button
+        type="button"
         className="remove-button"
         title="Remove server"
-        onClick={() => void remove(server.id)}
+        onClick={() => {
+          // Destructive and unrecoverable: the row, its logs, and its
+          // keyring entries all go. One stray click shouldn't do that.
+          if (window.confirm(`Remove "${server.name}" and its stored secrets?`)) {
+            void remove(server.id);
+          }
+        }}
       >
         remove
       </button>
@@ -75,7 +93,9 @@ export function ServerList() {
     return (
       <p className="empty">
         Couldn't load the server list.{" "}
-        <button onClick={() => void load()}>retry</button>
+        <button type="button" onClick={() => void load()}>
+          retry
+        </button>
       </p>
     );
   if (servers.length === 0)

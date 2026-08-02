@@ -190,6 +190,13 @@ body {
   cursor: progress;
 }
 
+/* The input is visually hidden, so keyboard focus must show on the styled
+   slider — without this the switch has no focus indicator at all. */
+.switch input:focus-visible + .slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .remove-button {
   background: none;
   border: 1px solid var(--border);
@@ -228,6 +235,23 @@ body {
 .add-fields input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Keyboard-visible focus on every interactive control; the border tint
+   above is a pointer-focus nicety, not a substitute. */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.server-error {
+  display: block;
+  color: var(--err);
+  font-size: 0.78rem;
+  margin-top: 0.15rem;
+  overflow-wrap: anywhere;
 }
 
 .add-fields button {

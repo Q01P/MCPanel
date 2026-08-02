@@ -40,6 +40,7 @@ export function Workbench() {
 
       <div className="workbench-toolbar">
         <select
+          aria-label="target server"
           value={targetId ?? ""}
           onChange={(e) => setServer(e.target.value ? Number(e.target.value) : null)}
           disabled={running.length === 0}
@@ -56,6 +57,7 @@ export function Workbench() {
         </select>
 
         <select
+          aria-label="request template"
           value=""
           onChange={(e) => {
             const template = TEMPLATES.find((t) => t.label === e.target.value);
@@ -83,6 +85,7 @@ export function Workbench() {
         </label>
 
         <button
+          type="button"
           className="send-button"
           disabled={target == null || pending}
           onClick={() => target && void send(target.name)}
@@ -113,7 +116,7 @@ export function Workbench() {
           <ul>
             {history.map((entry) => (
               <li key={entry.seq}>
-                <button onClick={() => restore(entry)} title={entry.body}>
+                <button type="button" onClick={() => restore(entry)} title={entry.body}>
                   <span className="history-time">{entry.at}</span>
                   <span className="history-server">{entry.serverName}</span>
                   <span className="history-preview">

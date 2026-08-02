@@ -37,7 +37,7 @@ export default function App() {
       {error && (
         <div className="error-banner" role="alert">
           <span>{error}</span>
-          <button onClick={clearError} aria-label="dismiss">
+          <button type="button" onClick={clearError} aria-label="dismiss">
             ×
           </button>
         </div>

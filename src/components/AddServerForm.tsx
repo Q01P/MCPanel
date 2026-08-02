@@ -41,18 +41,21 @@ export function AddServerForm() {
       <h2>Add server</h2>
       <div className="add-fields">
         <input
+          aria-label="server name"
           placeholder="name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
         />
         <input
+          aria-label="command"
           placeholder="command (e.g. npx)"
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           required
         />
         <input
+          aria-label="arguments"
           placeholder="args (e.g. -y some-mcp-server)"
           value={args}
           onChange={(e) => setArgs(e.target.value)}

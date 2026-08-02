@@ -7,10 +7,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
-      // Known gaps (unlabeled controls, invisible focus) are queued for the
-      // dedicated accessibility pass; enable this group when it lands.
-      "a11y": "off"
+      "recommended": true
     }
   }
 }
