@@ -1,6 +1,9 @@
-//! Secrets tests. Store round-trips need a live OS credential store (Secret
-//! Service on Linux); when none is reachable those tests skip rather than
-//! fail. The missing-secret start-failure path needs no store at all — a
+//! Secrets tests. Store round-trips need a live OS credential store and are
+//! opt-in via `MCPANEL_TEST_KEYRING=1`; without it they skip rather than
+//! fail. Opt-in instead of probing: on a macOS CI runner the probe pops an
+//! interactive keychain-unlock prompt nothing can answer, and the suite
+//! hangs until the job timeout (observed on the very first macOS CI run).
+//! The missing-secret start-failure path needs no store at all — a
 //! missing/unreachable credential must fail the start either way.
 //!
 //! Keyring entries are keyed by server id; tests that talk to the store
@@ -20,9 +23,13 @@ use mcpanel_lib::error::AppError;
 use mcpanel_lib::secrets;
 use mcpanel_lib::state::{AppState, ServerStatus};
 
-/// Detect a usable credential store; skip (not fail) store-dependent tests
-/// on headless machines.
+/// Store-dependent tests run only when explicitly requested (see the module
+/// docs for why probing is unsafe in CI). With the env var set, a quick
+/// round-trip still verifies the store actually works before proceeding.
 fn store_available() -> bool {
+    if std::env::var_os("MCPANEL_TEST_KEYRING").is_none() {
+        return false;
+    }
     match secrets::store_secret(-1, "PROBE", "1") {
         Ok(()) => {
             let _ = secrets::delete_secret(-1, "PROBE");

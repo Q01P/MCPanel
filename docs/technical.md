@@ -564,8 +564,9 @@ methods `-32601`, and exits on stdin EOF.
   concurrent start+remove rounds, and the auto-start sweep.
 - `gateway.rs` — a real fixture driven end-to-end over the HTTP surface;
   stopped *and* crashed servers both 404.
-- `secrets.rs` — keyring round-trips (skip cleanly when no OS store is
-  reachable; probes with negative ids so they can't touch real entries);
+- `secrets.rs` — keyring round-trips (opt-in via `MCPANEL_TEST_KEYRING=1`
+  — probing the store from CI hangs a macOS runner on a keychain prompt;
+  probes use negative ids so they can't touch real entries);
   unresolvable secret fails the start regardless; rename keeps secrets
   reachable; remove deletes entries; recreate-after-delete inherits
   nothing; the legacy name→id migration is idempotent.
