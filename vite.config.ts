@@ -9,5 +9,10 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    watch: {
+      // Never watch the Rust build output: target/ holds hundreds of
+      // thousands of files and blows the inotify watcher limit (ENOSPC).
+      ignored: ["**/src-tauri/**"],
+    },
   },
 });
