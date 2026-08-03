@@ -37,7 +37,7 @@ Deliberately minimalist — **no Electron, no Node/Python backend**:
 | UI ↔ backend streaming | Token-guarded local Axum gateway on an ephemeral loopback port (SSE + JSON-RPC forwarding) |
 | Config storage | SQLite (rusqlite, bundled) |
 | Secrets | `keyring` v4 → OS credential store |
-| Frontend | React 19 + Vite 8 + TypeScript + Zustand (not scaffolded yet) |
+| Frontend | React 19 + Vite 8 + TypeScript + Zustand |
 | JSON editor | `@uiw/react-codemirror` (CodeMirror 6 — **not Monaco**) |
 
 ### Dependency policy (binding)
@@ -53,6 +53,8 @@ current stable before adding new deps. Notable pins:
 - `keyring 4.1.5` — **v4**: default features auto-select the platform store;
   the v3 `linux-native`/`sync-secret-service` feature flags no longer exist
 - `thiserror 2.0.19`, `tracing 0.1.44`, `tracing-subscriber 0.3.23`
+- frontend dev tooling (`vitest 4.1.x`, `happy-dom 20.x`, `@biomejs/biome
+  2.5.x`) verified against npm on 2026-08-03
 - `windows-sys 0.61.2`, `libc 0.2.189`, `ring 0.17.14`
 - `edition = "2024"` (newest Rust edition — do not change), `rust-version = "1.85"`
 - `anyhow` is **dev-dependencies only** — tests may use it, production code
@@ -263,6 +265,32 @@ tasks** — do not scaffold ahead of the agreed task.
 - [x] **T13** — Packaging: bundling on, icons, CI (3-OS matrix), release
       workflow, size budget check
 
+Post-T13 hardening round, from the full-codebase review (all landed):
+
+- [x] **I1** — crashed servers clear their runtime: the gateway 404s instead
+      of writing to a dead child's stdin, and stop resets Errored → Stopped
+- [x] **I2** — `tests/common/`: the duplicated suite helpers consolidated;
+      the diverged `alive()` copy read `/proc` unconditionally and would
+      have failed the macOS leg; deadline polls replace fixed sleeps in the
+      flood tests
+- [x] **I3** — CI hardening: `--locked` on every cargo call, `fmt --check`,
+      an MSRV (1.85) job, job timeouts + concurrency cancel, and the release
+      workflow gated on clippy + tests
+- [x] **I4** — frontend tooling: vitest + biome, wired into CI
+- [x] **I5** — frontend fixes: removed servers' log buckets can't resurrect,
+      mutations report success (form input survives failures), failed load
+      is not rendered as "no servers", SSE frames parse defensively
+- [x] **I6** — `InvalidInput`/`Conflict`/`Internal` error variants, input
+      validation on add/update, a config-write lock closing the
+      update-vs-set_secret lost-update race, keyring migration off the
+      setup thread
+- [x] **I7** — tree-kill on the early teardown paths, bounded
+      handshake-failure reap, gateway timeout-clamp + SSE delivery tests
+- [x] **I8** — accessibility (switch semantics, focus rings, labels),
+      confirm-on-remove, an error boundary, a real CSP
+- [x] **I9** — edit-server + env/secrets UI over the (until then
+      UI-unreachable) update/secret commands
+
 ## 6. Development
 
 Cargo is user-local — if it's not on PATH: `export PATH="$HOME/.cargo/bin:$PATH"`.
@@ -273,8 +301,15 @@ cargo test   --manifest-path src-tauri/Cargo.toml   # run tests (single: cargo t
 cargo clippy --manifest-path src-tauri/Cargo.toml   # lint
 ```
 
-Frontend / `tauri dev` commands land once `package.json` exists
-(`npm create tauri-app` conventions).
+```bash
+npm run tauri dev    # vite on :1420 + the backend
+npm test             # vitest
+npm run lint         # biome
+npm run typecheck    # tsc --noEmit
+```
+
+On a fresh clone run `npm ci && npm run build` before any cargo command —
+`tauri::generate_context!()` embeds `dist/` and `icons/` at compile time.
 
 Linux build prerequisites (already installed on the dev machine):
 `libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev

@@ -474,13 +474,15 @@ without affecting the sweep or the launch.
 | `types.ts` | TS mirrors of the backend serde shapes (1:1) |
 | `api.ts` | `invoke` wrappers + `{code,message}` error describer |
 | `events.ts` | SSE subscription (`gateway_info` → `EventSource`, 2 s auto-reconnect; `ready` fires the resync callback) |
-| `store.ts` | `usePanel` — server list, statuses, actions |
-| `logs.ts` | `useLogs` — per-server ring buffers, batching, lagged counter |
+| `store.ts` | `usePanel` — server list, statuses, actions, edit state |
+| `logs.ts` | `useLogs` — per-server ring buffers, batching, lagged counter, drop tombstones |
 | `workbench.ts` | `useWorkbench` — request body, templates, history, send |
-| `components/ServerList.tsx` | rows: badge, toggle switch, logs/remove buttons |
+| `envRows.ts` | pure row ↔ env-map conversion for the form (secret values never serialize) |
+| `components/ServerList.tsx` | rows: badge, toggle switch, edit/logs/remove buttons |
 | `components/LogViewer.tsx` | virtualized log pane |
 | `components/Workbench.tsx` | CodeMirror editor + response pane + history |
-| `components/AddServerForm.tsx` | minimal add form |
+| `components/ServerForm.tsx` | add/edit form incl. env + secrets editor |
+| `components/ErrorBoundary.tsx` | catches render throws (a webview has no reload button) |
 
 Design decisions worth knowing:
 
@@ -506,6 +508,17 @@ Design decisions worth knowing:
   bearer token and a configurable per-request timeout (1–300 s field,
   `?timeout_s=`), pretty-prints responses, and keeps the last 20 requests as
   clickable history. CodeMirror 6 via `@uiw/react-codemirror` (not Monaco).
+  `gateway_info` is fetched once and cached; the fetch carries an abort
+  timeout just above the server-side bound so a dead gateway can't pin the
+  send button.
+- **Secrets never ride the config payload.** The form serializes secret env
+  entries as markers; typed values go through `set_server_secret` straight
+  to the OS store. An existing secret shows "leave blank to keep" and only
+  rotates when a new value is typed; dropping the row (or un-marking it)
+  cleans the keyring entry via `update`'s orphan sweep.
+- **Removed servers stay removed.** `store.remove` drops the log bucket and
+  `logs.ts` tombstones the id — ids are AUTOINCREMENT and never recur, so
+  late SSE events for a deleted server can't resurrect its buffer.
 
 ---
 
@@ -537,8 +550,9 @@ methods `-32601`, and exits on stdin EOF.
   kills the tree; and the crash half — `orphan-harness` spawns a server
   through the real supervisor, the test **SIGKILLs the harness** (no cleanup
   runs), and the server dies anyway via PDEATHSIG.
-- `streams.rs` — ANSI stripping, garbage tolerance, 300 ms flood stays
-  bounded with a positive drop count.
+- `streams.rs` — ANSI stripping, garbage tolerance, flood stays bounded
+  with a positive drop count (polls until the channel is actually full —
+  a fixed sleep flaked on starved runners).
 - `protocol.rs` — handshake happy path/timeout, `-32601` surfacing, clean
   `ConnectionClosed` after stop, notification fan-out + overflow gap
   accounting, server-ping empty-result reply, unsupported-version
@@ -548,14 +562,25 @@ methods `-32601`, and exits on stdin EOF.
   unknown-id start, remove-while-running, plus the hostile edges:
   stop-cancels-start-during-Initializing, remove-while-starting,
   concurrent start+remove rounds, and the auto-start sweep.
-- `gateway.rs` — a real fixture driven end-to-end over the HTTP surface.
+- `gateway.rs` — a real fixture driven end-to-end over the HTTP surface;
+  stopped *and* crashed servers both 404.
 - `secrets.rs` — keyring round-trips (skip cleanly when no OS store is
   reachable; probes with negative ids so they can't touch real entries);
   unresolvable secret fails the start regardless; rename keeps secrets
   reachable; remove deletes entries; recreate-after-delete inherits
   nothing; the legacy name→id migration is idempotent.
-- Unit tests live beside their modules (error shape, token auth, capped
-  decoder, drop accounting, DB CRUD/migrations, frame parsing).
+- Unit tests live beside their modules (error shape + status mapping, token
+  auth incl. a per-route 401 sweep, timeout clamp, SSE delivery read off the
+  response body, capped decoder, drop accounting, DB CRUD/migrations +
+  name-conflict mapping, frame parsing).
+- Shared helpers live in `tests/common/mod.rs` — `alive()` (Linux `/proc`
+  with zombie handling, plain `kill(pid, 0)` elsewhere), `wait_for`,
+  fixture spawn/add builders. Don't re-roll them per suite; a diverged copy
+  is how the macOS-broken `alive()` happened.
+- Frontend: vitest suites next to the modules (`src/*.test.ts`) — log
+  batching/ring cap/drop tombstones, store mutations + resync debounce,
+  env-row serialization (typed secrets must never reach the config
+  payload), SSE frame parsing, timeout clamp. `npm test`.
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"           # cargo is user-local
@@ -604,15 +629,28 @@ stable before adding any dep (crates.io API requires a `User-Agent` header).
 
 ### CI (`.github/workflows/ci.yml`)
 
-3-OS matrix (ubuntu / macos / windows): Linux webkit deps → `npm ci && npm
-run build` → clippy `-D warnings` → debug-profile tests → release build →
-**size budget gate** (< 15 MB, fails the job). The windows leg is what
-compile-verifies the Job-Object code path.
+Three jobs, everything `--locked` (the committed lockfiles are the binding
+pins — CI must not resolve fresh):
+
+- **test**, 3-OS matrix (ubuntu / macos / windows): webkit deps (Linux) →
+  `npm ci && npm run build` → `fmt --check` → clippy `-D warnings` →
+  debug-profile tests → release build + **size budget gate** (< 15 MB,
+  Linux leg only; the size lands in the job summary). The windows leg is
+  what compile-verifies the Job-Object code path — the integration suites
+  are `#![cfg(unix)]`.
+- **frontend** (ubuntu): biome lint → `tsc --noEmit` → vitest.
+- **msrv** (ubuntu): `cargo check` on 1.85, so the declared `rust-version`
+  can't silently drift.
+
+Concurrency group cancels superseded runs; all jobs carry `timeout-minutes`.
 
 ### Release (`.github/workflows/release.yml`)
 
-Tag `v*` → `tauri-action` builds bundles for Linux, Windows, and macOS
-(arm64 + x86_64) and opens a draft GitHub release.
+Tag `v*` → a **check job** (clippy + full tests) must pass first → then
+`tauri-action` builds bundles for Linux, Windows, and macOS (arm64 +
+x86_64, targets installed only on the macOS legs) and opens a draft GitHub
+release. Each build leg runs `cargo fetch --locked` as the lockfile gate,
+since `tauri-action` takes no cargo flags.
 
 ---
 
