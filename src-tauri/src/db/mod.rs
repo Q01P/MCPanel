@@ -111,11 +111,11 @@ fn migrate(conn: &mut Connection) -> AppResult<()> {
 /// Surface the `servers.name` UNIQUE violation as a `Conflict` the UI can
 /// present ("name taken") instead of a 500 leaking raw SQL text.
 fn map_name_conflict(err: rusqlite::Error, name: &str) -> AppError {
-    if let rusqlite::Error::SqliteFailure(code, Some(message)) = &err {
-        if code.code == rusqlite::ErrorCode::ConstraintViolation && message.contains("servers.name")
-        {
-            return AppError::Conflict(format!("a server named \"{name}\" already exists"));
-        }
+    if let rusqlite::Error::SqliteFailure(code, Some(message)) = &err
+        && code.code == rusqlite::ErrorCode::ConstraintViolation
+        && message.contains("servers.name")
+    {
+        return AppError::Conflict(format!("a server named \"{name}\" already exists"));
     }
     err.into()
 }

@@ -70,12 +70,12 @@ fn validate_config<'a>(
     if command.trim().is_empty() {
         return Err(AppError::InvalidInput("command must not be empty".into()));
     }
-    if let Some(cwd) = cwd {
-        if !std::path::Path::new(cwd).is_dir() {
-            return Err(AppError::InvalidInput(format!(
-                "working directory does not exist: {cwd}"
-            )));
-        }
+    if let Some(cwd) = cwd
+        && !std::path::Path::new(cwd).is_dir()
+    {
+        return Err(AppError::InvalidInput(format!(
+            "working directory does not exist: {cwd}"
+        )));
     }
     if env_keys.any(|key| key.trim().is_empty()) {
         return Err(AppError::InvalidInput(

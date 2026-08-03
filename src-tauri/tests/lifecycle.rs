@@ -248,12 +248,10 @@ async fn grandchild_pid_from_logs(
             stream: LogStream::Stdout,
             line,
         } = event
+            && server_id == id
+            && let Ok(pid) = line.trim().parse::<i32>()
         {
-            if server_id == id {
-                if let Ok(pid) = line.trim().parse::<i32>() {
-                    return pid;
-                }
-            }
+            return pid;
         }
     }
 }

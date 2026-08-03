@@ -131,10 +131,10 @@ async fn server_initiated_ping_gets_empty_result() {
             .await
             .expect("pong confirmation within 2s")
             .expect("stderr open");
-        if let StreamEvent::Line(line) = event {
-            if line.contains("client answered ping") {
-                break;
-            }
+        if let StreamEvent::Line(line) = event
+            && line.contains("client answered ping")
+        {
+            break;
         }
     }
 

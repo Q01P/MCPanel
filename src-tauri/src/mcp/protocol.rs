@@ -314,11 +314,11 @@ async fn dispatch(
         // Server notification → UI stream; advisory, but drops are counted
         // and surfaced as a Gap once the channel has room again.
         (None, _) if frame.get("method").is_some() => {
-            if *notif_lost > 0 {
-                if let Ok(permit) = notif_tx.try_reserve() {
-                    permit.send(NotificationEvent::Gap(*notif_lost));
-                    *notif_lost = 0;
-                }
+            if *notif_lost > 0
+                && let Ok(permit) = notif_tx.try_reserve()
+            {
+                permit.send(NotificationEvent::Gap(*notif_lost));
+                *notif_lost = 0;
             }
             if notif_tx.try_send(NotificationEvent::Frame(frame)).is_err() {
                 *notif_lost += 1;
