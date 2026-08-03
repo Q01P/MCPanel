@@ -6,7 +6,7 @@ authors = ["Oussema Taleb <taleb@xseth.com>"]
 license = "MIT"
 repository = "https://github.com/Q01P/mcpanel"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 # Test fixtures add extra [[bin]] targets (mock-mcp-server, orphan-harness);
 # `cargo run` — and therefore `tauri dev` — needs the app named explicitly.
 default-run = "mcpanel"

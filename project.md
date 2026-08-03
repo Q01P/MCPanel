@@ -56,7 +56,10 @@ current stable before adding new deps. Notable pins:
 - frontend dev tooling (`vitest 4.1.x`, `happy-dom 20.x`, `@biomejs/biome
   2.5.x`) verified against npm on 2026-08-03
 - `windows-sys 0.61.2`, `libc 0.2.189`, `ring 0.17.14`
-- `edition = "2024"` (newest Rust edition — do not change), `rust-version = "1.85"`
+- `edition = "2024"` (newest Rust edition — do not change), `rust-version = "1.95"`
+  (raised from 1.85: `keyring 4.1.5` declares 1.88, and `libsqlite3-sys
+  0.38.1` needs `cfg_select!` — stable since 1.95 — while declaring no MSRV;
+  1.95 is the compile-verified floor, and downgrading pins is off the table)
 - `anyhow` is **dev-dependencies only** — tests may use it, production code
   never does; everything funnels into `AppError`
 
@@ -274,7 +277,7 @@ Post-T13 hardening round, from the full-codebase review (all landed):
       have failed the macOS leg; deadline polls replace fixed sleeps in the
       flood tests
 - [x] **I3** — CI hardening: `--locked` on every cargo call, `fmt --check`,
-      an MSRV (1.85) job, job timeouts + concurrency cancel, and the release
+      an MSRV job, job timeouts + concurrency cancel, and the release
       workflow gated on clippy + tests
 - [x] **I4** — frontend tooling: vitest + biome, wired into CI
 - [x] **I5** — frontend fixes: removed servers' log buckets can't resurrect,

@@ -102,7 +102,10 @@ jobs:
       - name: Tests
         run: npm test
 
-  # rust-version = "1.85" is declared in Cargo.toml; build it or it drifts.
+  # rust-version = "1.95" is declared in Cargo.toml; build it or it drifts.
+  # (1.85 was the original target; keyring 4.1.5 declares 1.88, and
+  # libsqlite3-sys 0.38.1 needs cfg_select! — stable since 1.95 — while
+  # declaring no rust-version at all. 1.95 is the verified floor.)
   msrv:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -120,7 +123,7 @@ jobs:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@1.85
+      - uses: dtolnay/rust-toolchain@1.95
 
       - uses: Swatinem/rust-cache@v2
         with:

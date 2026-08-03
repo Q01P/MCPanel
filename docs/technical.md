@@ -620,7 +620,11 @@ Versions in `src-tauri/Cargo.toml` and `package.json` were verified against
 crates.io / npm on **2026-07-27**. Caret ranges + committed lockfiles are the
 effective pins. Never "downgrade" to remembered versions; re-verify current
 stable before adding any dep (crates.io API requires a `User-Agent` header).
-`edition = "2024"`, `rust-version = "1.85"`.
+`edition = "2024"`, `rust-version = "1.95"`. The original 1.85 was never
+buildable — the first MSRV CI run caught it: `keyring 4.1.5` declares 1.88,
+and `libsqlite3-sys 0.38.1` uses `cfg_select!` (stable since 1.95) while
+declaring no MSRV, so only a real build pins the floor. Verified by
+compiling on 1.94 (fails) and 1.95 (passes).
 
 ### Release profile
 
@@ -639,7 +643,7 @@ pins — CI must not resolve fresh):
   what compile-verifies the Job-Object code path — the integration suites
   are `#![cfg(unix)]`.
 - **frontend** (ubuntu): biome lint → `tsc --noEmit` → vitest.
-- **msrv** (ubuntu): `cargo check` on 1.85, so the declared `rust-version`
+- **msrv** (ubuntu): `cargo check` on 1.95, so the declared `rust-version`
   can't silently drift.
 
 Concurrency group cancels superseded runs; all jobs carry `timeout-minutes`.
