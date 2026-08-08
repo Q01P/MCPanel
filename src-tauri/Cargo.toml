@@ -31,6 +31,9 @@ tokio-stream = { version = "0.1.19", features = ["sync"] }
 axum = "0.8.9"
 hyper = "1.11.0"
 tower = { version = "0.5.3", features = ["timeout", "util"] }
+# Verified against crates.io 2026-08-08. The webview and the gateway are
+# different origins, so every browser-side call is subject to CORS.
+tower-http = { version = "0.7.0", features = ["cors"] }
 
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 dashmap = "6.2.1"

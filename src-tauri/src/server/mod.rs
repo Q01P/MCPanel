@@ -8,13 +8,19 @@
 //! DNS-rebinding-shaped requests whose Host header isn't the bound address.
 //! The token is accepted via query parameter on `/sse` only (EventSource
 //! cannot set headers); nothing here logs request URIs.
+//!
+//! The webview is a *different origin* from the gateway (`tauri://localhost`
+//! or `http://tauri.localhost` in production, the vite dev server in dev), so
+//! every browser-side call — the `/sse` EventSource and the workbench POST —
+//! is subject to CORS. The [`cors_layer`] grants exactly those origins;
+//! without it the webview can never read a gateway response.
 
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderValue, Method, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -24,6 +30,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::{Stream, StreamExt};
 use tower::ServiceBuilder;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info};
 
 use crate::error::{AppError, AppResult};
@@ -119,7 +126,7 @@ fn authorize(headers: &HeaderMap, query_token: Option<&str>, gateway: &Gateway) 
         return Err(AppError::Unauthorized);
     }
     let candidate = headers
-        .get(axum::http::header::AUTHORIZATION)
+        .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .or(query_token);
@@ -127,6 +134,30 @@ fn authorize(headers: &HeaderMap, query_token: Option<&str>, gateway: &Gateway) 
         Some(c) if gateway.token.matches(c) => Ok(()),
         _ => Err(AppError::Unauthorized),
     }
+}
+
+/// CORS for the webview origins — and only those. CORS is a browser gate,
+/// not the auth layer (that stays token + Host), but there is no reason to
+/// let any other page's script read gateway responses. Preflights are
+/// answered by the layer itself before `authorize` runs; that is correct —
+/// a preflight carries no credentials by design and grants nothing beyond
+/// permission to send the real, fully-authenticated request.
+fn cors_layer() -> CorsLayer {
+    let mut origins = vec![
+        // Linux/macOS production webview.
+        HeaderValue::from_static("tauri://localhost"),
+        // Windows production webview.
+        HeaderValue::from_static("http://tauri.localhost"),
+    ];
+    if cfg!(debug_assertions) {
+        // The vite dev server (`npm run tauri dev`).
+        origins.push(HeaderValue::from_static("http://localhost:1420"));
+    }
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        .max_age(Duration::from_secs(3600))
 }
 
 #[derive(serde::Deserialize)]
@@ -198,9 +229,15 @@ async fn mcp_forward(
     Path(server_id): Path<ServerId>,
     headers: HeaderMap,
     Query(query): Query<ForwardQuery>,
-    Json(request): Json<ForwardRequest>,
+    body: bytes::Bytes,
 ) -> AppResult<Json<Value>> {
     authorize(&headers, None, &gateway)?;
+
+    // Parsed here, not via the `Json` extractor: extractors run before the
+    // handler, so a malformed body would otherwise earn a 4xx parse hint
+    // without ever presenting a token.
+    let request: ForwardRequest = serde_json::from_slice(&body)
+        .map_err(|error| AppError::InvalidInput(format!("invalid JSON-RPC body: {error}")))?;
 
     let runtime = gateway
         .app
@@ -251,6 +288,7 @@ pub fn router(gateway: Gateway) -> Router {
     Router::new()
         .route("/sse", get(sse_events))
         .route("/mcp/{server_id}", forward)
+        .layer(cors_layer())
         .with_state(gateway)
 }
 
@@ -540,6 +578,133 @@ mod tests {
             });
         }
         read_until(&mut body, &mut seen, r#""type":"lagged""#, deadline).await;
+    }
+
+    /// The webview can only read a gateway response if CORS grants its
+    /// origin — gateway tests speak raw HTTP and would never notice a
+    /// missing grant, so the headers are asserted explicitly.
+    #[tokio::test]
+    async fn cors_grants_the_webview_origins() {
+        let gateway = test_gateway();
+        let mut origins = vec!["tauri://localhost", "http://tauri.localhost"];
+        if cfg!(debug_assertions) {
+            origins.push("http://localhost:1420");
+        }
+        for origin in origins {
+            let request = Request::builder()
+                .uri(format!("/sse?token={}", gateway.token.expose()))
+                .header(header::HOST, TEST_HOST)
+                .header(header::ORIGIN, origin)
+                .body(Body::empty())
+                .unwrap();
+            let response = router(gateway.clone()).oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+                origin,
+                "{origin} must be granted"
+            );
+        }
+    }
+
+    /// The workbench POST carries an Authorization header, which forces a
+    /// preflight — if OPTIONS 405s, the real request is never sent.
+    #[tokio::test]
+    async fn cors_preflight_succeeds_for_the_workbench_post() {
+        let gateway = test_gateway();
+        let preflight = Request::builder()
+            .method("OPTIONS")
+            .uri("/mcp/1")
+            .header(header::HOST, TEST_HOST)
+            .header(header::ORIGIN, "tauri://localhost")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+            .header(
+                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                "authorization,content-type",
+            )
+            .body(Body::empty())
+            .unwrap();
+        let response = router(gateway.clone()).oneshot(preflight).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let headers = response.headers();
+        assert_eq!(
+            headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "tauri://localhost"
+        );
+        let allowed_headers = headers[header::ACCESS_CONTROL_ALLOW_HEADERS]
+            .to_str()
+            .unwrap()
+            .to_ascii_lowercase();
+        assert!(
+            allowed_headers.contains("authorization"),
+            "{allowed_headers}"
+        );
+        assert!(
+            allowed_headers.contains("content-type"),
+            "{allowed_headers}"
+        );
+        assert!(
+            headers[header::ACCESS_CONTROL_ALLOW_METHODS]
+                .to_str()
+                .unwrap()
+                .contains("POST")
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_grants_nothing_to_foreign_origins() {
+        let gateway = test_gateway();
+        let request = Request::builder()
+            .uri(format!("/sse?token={}", gateway.token.expose()))
+            .header(header::HOST, TEST_HOST)
+            .header(header::ORIGIN, "http://evil.example")
+            .body(Body::empty())
+            .unwrap();
+        let response = router(gateway.clone()).oneshot(request).await.unwrap();
+        // The request is served — CORS is a browser gate, and auth already
+        // passed — but no allow-origin grant is issued for the response.
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+    }
+
+    /// Auth strictly precedes body parsing: an unauthenticated caller gets
+    /// 401 and nothing else — never a parse error that hints at the schema.
+    #[tokio::test]
+    async fn malformed_body_is_rejected_only_after_auth() {
+        let gateway = test_gateway();
+        let unauthenticated = Request::builder()
+            .method("POST")
+            .uri("/mcp/1")
+            .header(header::HOST, TEST_HOST)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("not json"))
+            .unwrap();
+        assert_eq!(
+            status_of(&gateway, unauthenticated).await,
+            StatusCode::UNAUTHORIZED
+        );
+
+        let authenticated = Request::builder()
+            .method("POST")
+            .uri("/mcp/1")
+            .header(header::HOST, TEST_HOST)
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", gateway.token.expose()),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("not json"))
+            .unwrap();
+        assert_eq!(
+            status_of(&gateway, authenticated).await,
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[tokio::test]
