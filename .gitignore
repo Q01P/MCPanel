@@ -12,6 +12,16 @@ dist/
 # Local
 *.local
 .env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
 .DS_Store
 CLAUDE.md
 .claude/
+
+# Internal reference docs (local-only, not part of the public repo)
+project.md
+mcpanel.md
+docs/technical.md
+release-runbook.md

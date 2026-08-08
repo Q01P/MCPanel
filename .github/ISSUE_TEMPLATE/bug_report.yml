@@ -1,0 +1,41 @@
+name: Bug report
+description: Something broke or behaved unexpectedly
+labels: [bug]
+body:
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: "e.g. macOS 15.2 (Apple Silicon), Windows 11 24H2, Ubuntu 24.04"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: MCPanel version
+      placeholder: "e.g. 0.1.0 (release download or built from source?)"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        Paste relevant output from MCPanel's log pane and/or the terminal you
+        launched it from. Redact anything sensitive — never paste secret values.
+      render: text
+  - type: textarea
+    id: server-config
+    attributes:
+      label: Server configuration (if relevant)
+      description: >-
+        The command/args of the MCP server involved, if the bug relates to a
+        specific server. Leave env values out.
+      render: text
