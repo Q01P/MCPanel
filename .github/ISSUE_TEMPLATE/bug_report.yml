@@ -29,7 +29,7 @@ body:
       label: Logs
       description: >-
         Paste relevant output from MCPanel's log pane and/or the terminal you
-        launched it from. Redact anything sensitive — never paste secret values.
+        launched it from. Redact anything sensitive; never paste secret values.
       render: text
   - type: textarea
     id: server-config

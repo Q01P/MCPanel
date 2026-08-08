@@ -14,7 +14,7 @@ First public release.
 - **Server management**: add, edit, and remove local MCP server configurations
   (command, args, env vars), stored in SQLite.
 - **Service-style toggles**: starting a server spawns the process and completes
-  the MCP `initialize` handshake before it's shown as running — "running" means
+  the MCP `initialize` handshake before it's shown as running; "running" means
   ready for tool calls.
 - **Live log streaming**: per-server stdout/stderr, line by line, ANSI escapes
   stripped. Flood-proof by design: 64 KiB line cap, bounded buffering with
@@ -22,8 +22,8 @@ First public release.
 - **JSON-RPC workbench**: a CodeMirror editor to hand-craft requests, send them
   to a running server, and inspect responses.
 - **Process supervision**: servers run in Unix process groups with PDEATHSIG on
-  Linux, or Windows Job Objects with kill-on-close — no orphaned processes when
-  MCPanel exits or crashes. Graceful stop (2 s grace, then hard kill).
+  Linux, or Windows Job Objects with kill-on-close, so there are no orphaned
+  processes when MCPanel exits or crashes. Graceful stop (2 s grace, then hard kill).
 - **Secrets in the OS keyring**: env values marked secret live in the OS
   credential manager (Keychain / Windows Credential Manager / Secret Service),
   are resolved just-in-time at spawn, and never appear in config, events, or
