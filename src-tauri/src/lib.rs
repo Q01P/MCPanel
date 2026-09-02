@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod import;
 pub mod mcp;
 pub mod secrets;
 pub mod server;
@@ -73,6 +74,9 @@ pub fn run() {
             commands::set_server_secret,
             commands::delete_server_secret,
             commands::gateway_info,
+            commands::discover_imports,
+            commands::read_import_config,
+            commands::import_servers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MCPanel");

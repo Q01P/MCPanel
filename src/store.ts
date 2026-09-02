@@ -1,7 +1,14 @@
 import { create } from "zustand";
 import * as api from "./api";
 import { useLogs } from "./logs";
-import type { AppEvent, NewServer, ServerOverview, ServerRecord } from "./types";
+import type {
+  AppEvent,
+  DiscoveredConfig,
+  ImportOutcome,
+  NewServer,
+  ServerOverview,
+  ServerRecord,
+} from "./types";
 
 interface PanelState {
   servers: ServerOverview[];
@@ -11,6 +18,8 @@ interface PanelState {
   error: string | null;
   /** The server whose config the form is editing; null = add mode. */
   editing: ServerOverview | null;
+  /** The import dialog is open. */
+  importOpen: boolean;
   load: () => Promise<void>;
   resync: () => void;
   /** Mutations resolve truthy on success so callers can keep user input
@@ -22,6 +31,12 @@ interface PanelState {
   remove: (id: number) => Promise<boolean>;
   toggle: (id: number, run: boolean) => Promise<boolean>;
   setEditing: (server: ServerOverview | null) => void;
+  setImportOpen: (open: boolean) => void;
+  /** Import reads return null on failure, having set the error banner —
+   * same contract as the mutations above. */
+  discoverImports: () => Promise<DiscoveredConfig[] | null>;
+  readImportFile: (path: string) => Promise<DiscoveredConfig | null>;
+  runImport: (path: string, names: string[]) => Promise<ImportOutcome | null>;
   applyEvent: (event: AppEvent) => void;
   clearError: () => void;
 }
@@ -36,6 +51,7 @@ export const usePanel = create<PanelState>((set, get) => ({
   loadFailed: false,
   error: null,
   editing: null,
+  importOpen: false,
 
   load: async () => {
     try {
@@ -142,6 +158,39 @@ export const usePanel = create<PanelState>((set, get) => ({
   },
 
   setEditing: (server) => set({ editing: server }),
+
+  setImportOpen: (open) => set({ importOpen: open }),
+
+  discoverImports: async () => {
+    try {
+      return await api.discoverImports();
+    } catch (error) {
+      set({ error: api.describeError(error) });
+      return null;
+    }
+  },
+
+  readImportFile: async (path) => {
+    try {
+      return await api.readImportConfig(path);
+    } catch (error) {
+      set({ error: api.describeError(error) });
+      return null;
+    }
+  },
+
+  // The caller reports per-entry failures from the outcome; only a failed
+  // call itself reaches the error banner.
+  runImport: async (path, names) => {
+    try {
+      const outcome = await api.importServers(path, names);
+      await get().load();
+      return outcome;
+    } catch (error) {
+      set({ error: api.describeError(error) });
+      return null;
+    }
+  },
 
   clearError: () => set({ error: null }),
 }));

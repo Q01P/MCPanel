@@ -5,6 +5,23 @@ All notable changes to MCPanel are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Import from other MCP clients**: MCPanel now scans the standard config
+  locations for Claude Desktop, Claude Code, Cursor, VS Code, and Windsurf,
+  and offers the stdio servers it finds for import; a config file at any other
+  path can be read by pasting it in. Entries it can't honour (remote `url` /
+  `http` / `sse` servers, entries with no command) are listed with the reason
+  rather than dropped silently, name clashes are imported as `name (2)`, and
+  imported servers are never armed to auto-start.
+- Importing moves credentials **out** of plaintext config: environment
+  variables whose names look like credentials are written to the OS keyring
+  and kept here only as markers. Their values are read from the source file
+  backend-side and never cross into the UI. A server whose credentials fail to
+  store is rolled back rather than left unable to start.
+
 ## [0.1.0] - 2026-08-08
 
 First public release.

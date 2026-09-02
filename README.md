@@ -8,6 +8,7 @@ MCP servers are the small stdio programs that give AI clients access to tools. T
 
 ## Features
 
+- **Import from the clients you already use.** MCPanel reads the MCP servers already configured in Claude Desktop, Claude Code, Cursor, VS Code, and Windsurf, and offers them for import — no retyping. Credential-looking environment variables are moved straight from those plaintext config files into your OS keyring on the way in.
 - **Service-style toggles.** Flip a server on and MCPanel spawns the process *and* completes the MCP `initialize` handshake before showing it as running. "Running" means it's genuinely ready for tool calls, not just "the process exists."
 - **Live log streaming, flood-proof.** stdout/stderr of every server, line by line, ANSI escapes stripped. Oversized lines are capped at 64 KiB and bursts beyond the buffer are counted and reported as dropped, so a misbehaving server logging thousands of lines per second can't freeze the UI.
 - **JSON-RPC workbench.** A CodeMirror editor to hand-craft JSON-RPC requests, fire them at a running server, and inspect the response. This is the "Postman" part.
@@ -41,7 +42,7 @@ Download the `.deb`, `.rpm`, or `.AppImage`. The AppImage needs no install: `chm
 
 ## Quickstart
 
-1. Launch MCPanel and click **Add server**.
+1. Launch MCPanel and click **Import…** — if you already run MCP servers in another client, they're listed and ready to bring over. Otherwise click **Add server**.
 2. Enter the command and args, e.g. `npx` with args `-y @modelcontextprotocol/server-filesystem /tmp`.
 3. Add env vars if the server needs them; mark API keys as **secret** and they go straight to the OS keyring.
 4. Flip the toggle. Watch the status walk Starting → Initializing → **Running** while logs stream in below.
@@ -86,8 +87,30 @@ The UI talks to the backend over a local HTTP gateway. In short:
 
 Found a vulnerability? See [SECURITY.md](SECURITY.md) and please report privately.
 
+## Importing from other clients
+
+**Import…** scans the standard config locations for Claude Desktop, Claude Code
+(`~/.claude.json`), Cursor, VS Code, and Windsurf. If yours lives somewhere else
+— a project-local `.mcp.json`, say — paste its path into the dialog.
+
+- **Only stdio servers can be imported.** Entries with a `url` or an `http`/`sse`
+  transport are listed with the reason they were skipped rather than silently
+  dropped; see the limitation below.
+- **Credentials go to the keyring, not to MCPanel's config.** Environment
+  variables whose names look like credentials (`*_TOKEN`, `*_API_KEY`,
+  `*_SECRET`, `*_PASSWORD`, …) are written to the OS credential manager and
+  stored here only as a marker. Their values are read from the source file
+  backend-side and never reach the UI.
+- **Nothing is overwritten.** A name that's already taken is imported as
+  `name (2)`, and the dialog says so before and after. Imported servers are
+  never armed to auto-start.
+- **Your original config is untouched.** Import only reads.
+
 ## Known limitations
 
+- **Import covers stdio servers only.** Remote (`http`/`sse`) MCP servers in a
+  client's config are reported as skipped, because MCPanel itself speaks stdio
+  only — remote transport support is on the roadmap.
 - On Unix, if MCPanel itself is SIGKILLed, a reparented grandchild process can survive (PDEATHSIG covers direct children only). Normal exits and crashes are fully covered.
 - Windows graceful shutdown is compile-verified but untested on real hardware and likely degrades to grace-then-terminate. **Windows testers wanted:** if you can try it on a real box, [open an issue](https://github.com/Q01P/mcpanel/issues) with what you find.
 
