@@ -11,7 +11,8 @@ MCP servers are the small stdio programs that give AI clients access to tools. T
 - **Import from the clients you already use.** MCPanel reads the MCP servers already configured in Claude Desktop, Claude Code, Cursor, VS Code, and Windsurf, and offers them for import — no retyping. Credential-looking environment variables are moved straight from those plaintext config files into your OS keyring on the way in.
 - **Service-style toggles.** Flip a server on and MCPanel spawns the process *and* completes the MCP `initialize` handshake before showing it as running. "Running" means it's genuinely ready for tool calls, not just "the process exists."
 - **Live log streaming, flood-proof.** stdout/stderr of every server, line by line, ANSI escapes stripped. Oversized lines are capped at 64 KiB and bursts beyond the buffer are counted and reported as dropped, so a misbehaving server logging thousands of lines per second can't freeze the UI.
-- **JSON-RPC workbench.** A CodeMirror editor to hand-craft JSON-RPC requests, fire them at a running server, and inspect the response. This is the "Postman" part.
+- **Tools browser.** Pick a running server and its tools are listed; pick a tool and its `inputSchema` becomes a form — strings, numbers, booleans, enums as the right controls, anything richer as a JSON field — with strict typing on the way out (`"12abc"` is not a number, `1.5` is not an integer, an empty optional is omitted rather than sent as `""`). Call it and read the result as text, not as an envelope. This is the "Postman" part.
+- **Raw JSON-RPC editor.** One tab over: a CodeMirror editor to hand-craft any request and inspect the exact response. Every tool call lands in the shared history as the JSON-RPC it amounted to, and **open in editor** hands a tool's request over for tweaking.
 - **No orphaned processes.** Servers are spawned into Unix process groups with PDEATHSIG (Linux) or Windows Job Objects with kill-on-close. If MCPanel exits or crashes, the servers it started die with it.
 - **Sane secrets handling.** API keys live in the OS credential manager (Keychain / Windows Credential Manager / Secret Service), never in plaintext config. They're resolved only at spawn time and never appear in logs or events.
 
@@ -46,7 +47,7 @@ Download the `.deb`, `.rpm`, or `.AppImage`. The AppImage needs no install: `chm
 2. Enter the command and args, e.g. `npx` with args `-y @modelcontextprotocol/server-filesystem /tmp`.
 3. Add env vars if the server needs them; mark API keys as **secret** and they go straight to the OS keyring.
 4. Flip the toggle. Watch the status walk Starting → Initializing → **Running** while logs stream in below.
-5. Open the **workbench**, fire a `tools/list` request, and inspect the response.
+5. In the **workbench**, pick a tool from the list, fill in its inputs, and click **call**. Switch to **Raw JSON-RPC** when you want to hand-craft the request yourself.
 
 That's it: you now have a supervised MCP server with live logs and a request console.
 

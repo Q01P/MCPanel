@@ -1,7 +1,8 @@
 //! Test fixture: a tiny stdio binary speaking just enough MCP, with
 //! failure-mode flags (spec §4).
 //!
-//! Default: answers `initialize`, `tools/list`, `ping`; exits on stdin EOF.
+//! Default: answers `initialize`, `tools/list`, `tools/call`, `ping`; exits
+//! on stdin EOF.
 //! `--spam`          floods stdout as fast as possible
 //! `--spawn-child`   spawns an idle grandchild, prints its pid
 //! `--no-handshake`  never answers `initialize`
@@ -164,16 +165,67 @@ fn serve(flags: Flags) {
                     lock.flush().expect("flush server ping");
                 }
             }
+            // One tool with a schema wide enough to exercise every input kind
+            // the tools browser renders: string, integer, boolean, enum.
             ("tools/list", Some(id)) => respond(
                 &id,
                 serde_json::json!({
                     "tools": [{
                         "name": "echo",
                         "description": "echoes its input",
-                        "inputSchema": { "type": "object" },
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {
+                                    "type": "string",
+                                    "description": "text to echo back",
+                                },
+                                "repeat": {
+                                    "type": "integer",
+                                    "description": "how many times",
+                                    "default": 1,
+                                },
+                                "shout": {
+                                    "type": "boolean",
+                                    "description": "uppercase the result",
+                                },
+                                "tone": {
+                                    "type": "string",
+                                    "enum": ["plain", "friendly", "terse"],
+                                },
+                            },
+                            "required": ["message"],
+                        },
                     }],
                 }),
             ),
+            ("tools/call", Some(id)) => {
+                let params = message.get("params").cloned().unwrap_or_default();
+                let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let args = params.get("arguments").cloned().unwrap_or_default();
+                let reply = |text: String, is_error: bool| {
+                    serde_json::json!({
+                        "content": [{ "type": "text", "text": text }],
+                        "isError": is_error,
+                    })
+                };
+                let result = if name != "echo" {
+                    reply(format!("unknown tool: {name}"), true)
+                } else if let Some(message) = args.get("message").and_then(|m| m.as_str()) {
+                    let repeat = args.get("repeat").and_then(|r| r.as_u64()).unwrap_or(1);
+                    let mut text = vec![message; repeat.clamp(1, 10) as usize].join(" ");
+                    if args.get("shout").and_then(|s| s.as_bool()) == Some(true) {
+                        text = text.to_uppercase();
+                    }
+                    if let Some(tone) = args.get("tone").and_then(|t| t.as_str()) {
+                        text = format!("[{tone}] {text}");
+                    }
+                    reply(text, false)
+                } else {
+                    reply("missing required argument: message".into(), true)
+                };
+                respond(&id, result);
+            }
             ("ping", Some(id)) => respond(&id, serde_json::json!({})),
             (_, Some(id)) => {
                 let stdout = std::io::stdout();
