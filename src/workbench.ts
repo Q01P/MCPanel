@@ -1,18 +1,6 @@
 import { create } from "zustand";
-import { describeError, gatewayInfo } from "./api";
-import type { GatewayInfo } from "./types";
-
-// The gateway address and token are fixed for the app's lifetime — cache
-// the promise so one invoke serves every send (and concurrent callers);
-// drop it on failure so the next send retries.
-let gateway: Promise<GatewayInfo> | undefined;
-function cachedGatewayInfo(): Promise<GatewayInfo> {
-  gateway ??= gatewayInfo().catch((error: unknown) => {
-    gateway = undefined;
-    throw error;
-  });
-  return gateway;
-}
+import { describeError } from "./api";
+import { postRaw } from "./rpc";
 
 export interface HistoryEntry {
   seq: number;
@@ -81,8 +69,13 @@ export const TEMPLATES: { label: string; body: string }[] = [
   },
 ];
 
+/** Which face of the workbench is showing: the tools browser, or the raw
+ * JSON-RPC editor it can hand requests to. */
+export type WorkbenchMode = "tools" | "raw";
+
 interface WorkbenchState {
   serverId: number | null;
+  mode: WorkbenchMode;
   body: string;
   response: string | null;
   pending: boolean;
@@ -90,14 +83,19 @@ interface WorkbenchState {
   timeoutS: number;
   history: HistoryEntry[];
   setServer: (id: number | null) => void;
+  setMode: (mode: WorkbenchMode) => void;
   setBody: (body: string) => void;
   setTimeoutS: (seconds: number) => void;
   restore: (entry: HistoryEntry) => void;
+  /** Record a request so it can be replayed from the raw editor — the tools
+   * browser records its calls here too, as the JSON-RPC they amount to. */
+  addHistory: (serverId: number, serverName: string, body: string) => void;
   send: (serverName: string) => Promise<void>;
 }
 
 export const useWorkbench = create<WorkbenchState>((set, get) => ({
   serverId: null,
+  mode: "tools",
   body: TEMPLATES[1].body, // tools/list — the most useful first probe
   response: null,
   pending: false,
@@ -105,13 +103,22 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
   history: [],
 
   setServer: (id) => set({ serverId: id }),
+  setMode: (mode) => set({ mode }),
   setBody: (body) => set({ body }),
   setTimeoutS: (seconds) =>
     set({ timeoutS: Math.min(Math.max(Math.round(seconds) || 1, 1), MAX_TIMEOUT_S) }),
   restore: (entry) => set({ serverId: entry.serverId, body: entry.body }),
 
+  addHistory: (serverId, serverName, body) =>
+    set({
+      history: [
+        { seq: nextSeq++, serverId, serverName, body, at: new Date().toLocaleTimeString() },
+        ...get().history,
+      ].slice(0, HISTORY_CAP),
+    }),
+
   send: async (serverName) => {
-    const { serverId, body, history, timeoutS } = get();
+    const { serverId, body, timeoutS } = get();
     if (serverId == null || get().pending) return;
 
     let payload: unknown;
@@ -124,38 +131,15 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
 
     set({ pending: true, response: null });
     try {
-      const { url, token } = await cachedGatewayInfo();
-      const res = await fetch(`${url}/mcp/${serverId}?timeout_s=${timeoutS}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-        // Client-side bound just above the server's own timeout: a dead
-        // gateway or stalled connection must not pin `pending` forever.
-        signal: AbortSignal.timeout((timeoutS + 15) * 1000),
-      });
-      const text = await res.text();
+      const { ok, status, text } = await postRaw(serverId, payload, timeoutS);
       let pretty = text;
       try {
         pretty = JSON.stringify(JSON.parse(text), null, 2);
       } catch {
         // non-JSON body (shouldn't happen) — show raw
       }
-      set({
-        response: res.ok ? pretty : `HTTP ${res.status}\n${pretty}`,
-        history: [
-          {
-            seq: nextSeq++,
-            serverId,
-            serverName,
-            body,
-            at: new Date().toLocaleTimeString(),
-          },
-          ...history,
-        ].slice(0, HISTORY_CAP),
-      });
+      set({ response: ok ? pretty : `HTTP ${status}\n${pretty}` });
+      get().addHistory(serverId, serverName, body);
     } catch (error) {
       set({ response: `request failed: ${describeError(error)}` });
     } finally {

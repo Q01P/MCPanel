@@ -38,3 +38,50 @@ export interface GatewayInfo {
   url: string;
   token: string;
 }
+
+// Import from other MCP clients' config files (backend: import.rs).
+
+export interface ImportCandidate {
+  name: string;
+  command: string;
+  args: string[];
+  cwd: string | null;
+  /** Plain environment variables. Never contains credential values. */
+  env: Record<string, string>;
+  /** Credential-looking keys, names only — values stay backend-side and go
+   * straight to the OS keyring at import. */
+  secret_keys: string[];
+  notes: string[];
+  /** A server of this name exists already; importing will suffix it. */
+  conflicts: boolean;
+}
+
+export interface SkippedEntry {
+  name: string;
+  reason: string;
+}
+
+export interface DiscoveredConfig {
+  client: string;
+  path: string;
+  servers: ImportCandidate[];
+  skipped: SkippedEntry[];
+}
+
+export interface ImportedServer {
+  id: number;
+  /** The name actually created — may differ from `source_name`. */
+  name: string;
+  source_name: string;
+  secrets_stored: number;
+}
+
+export interface FailedImport {
+  name: string;
+  reason: string;
+}
+
+export interface ImportOutcome {
+  imported: ImportedServer[];
+  failed: FailedImport[];
+}

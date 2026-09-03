@@ -94,6 +94,7 @@ export function ServerList() {
   const loaded = usePanel((s) => s.loaded);
   const loadFailed = usePanel((s) => s.loadFailed);
   const load = usePanel((s) => s.load);
+  const setImportOpen = usePanel((s) => s.setImportOpen);
 
   if (!loaded) return <p className="empty">loading…</p>;
   // A failed fetch with nothing cached must not read as "you have no
@@ -108,7 +109,15 @@ export function ServerList() {
       </p>
     );
   if (servers.length === 0)
-    return <p className="empty">No servers configured yet — add one below.</p>;
+    return (
+      <p className="empty">
+        No servers configured yet — add one below, or{" "}
+        <button type="button" className="link-button" onClick={() => setImportOpen(true)}>
+          import them
+        </button>{" "}
+        from another MCP client.
+      </p>
+    );
 
   return (
     <ul className="server-list">

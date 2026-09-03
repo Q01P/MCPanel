@@ -5,6 +5,38 @@ All notable changes to MCPanel are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Tools browser** in the workbench: a running server's `tools/list` is
+  shown as a list, a selected tool's `inputSchema` is rendered as a form
+  (string, number, integer, boolean, and string-enum properties get typed
+  controls; anything else is a JSON field; a schema with no properties is a
+  single JSON object field), and `tools/call` fires from it. Coercion is
+  strict — `"12abc"` is rejected as a number, `1.5` as an integer — and an
+  empty optional field is omitted rather than sent as `""`. Results render
+  their text content as text, other content and `structuredContent` as
+  labelled JSON, with the raw result one click away; a tool's own `isError`
+  is shown distinctly from a JSON-RPC error and from a transport failure.
+  `tools/list` pagination via `nextCursor` is followed. The raw JSON-RPC
+  editor is the second tab; every tool call is recorded in the shared
+  history as the request it amounted to, and **open in editor** hands the
+  current call over to it.
+
+- **Import from other MCP clients**: MCPanel now scans the standard config
+  locations for Claude Desktop, Claude Code, Cursor, VS Code, and Windsurf,
+  and offers the stdio servers it finds for import; a config file at any other
+  path can be read by pasting it in. Entries it can't honour (remote `url` /
+  `http` / `sse` servers, entries with no command) are listed with the reason
+  rather than dropped silently, name clashes are imported as `name (2)`, and
+  imported servers are never armed to auto-start.
+- Importing moves credentials **out** of plaintext config: environment
+  variables whose names look like credentials are written to the OS keyring
+  and kept here only as markers. Their values are read from the source file
+  backend-side and never cross into the UI. A server whose credentials fail to
+  store is rolled back rather than left unable to start.
+
 ## [0.1.0] - 2026-08-08
 
 First public release.

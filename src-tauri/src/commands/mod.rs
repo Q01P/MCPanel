@@ -8,6 +8,7 @@ use tracing::info;
 
 use crate::db::{NewServer, ServerRecord};
 use crate::error::AppResult;
+use crate::import::{DiscoveredConfig, ImportOutcome};
 use crate::state::{AppState, ServerId};
 
 use lifecycle::ServerOverview;
@@ -99,4 +100,36 @@ pub async fn delete_server_secret(
 ) -> AppResult<()> {
     info!(target: "app::commands", id, key = %key, "delete_server_secret");
     lifecycle::delete_secret(&state, id, key).await
+}
+
+// Import from other MCP clients' config files. Discovery and preview never
+// carry secret values; `import_servers` re-reads the file backend-side and
+// moves credentials straight into the OS keyring (see `crate::import`).
+
+#[tauri::command]
+#[tracing::instrument(target = "app::commands", skip(state))]
+pub async fn discover_imports(state: State<'_, AppState>) -> AppResult<Vec<DiscoveredConfig>> {
+    info!(target: "app::commands", "discover_imports");
+    crate::import::discover(&state).await
+}
+
+#[tauri::command]
+#[tracing::instrument(target = "app::commands", skip(state))]
+pub async fn read_import_config(
+    state: State<'_, AppState>,
+    path: String,
+) -> AppResult<DiscoveredConfig> {
+    info!(target: "app::commands", path = %path, "read_import_config");
+    crate::import::read_file(&state, path).await
+}
+
+#[tauri::command]
+#[tracing::instrument(target = "app::commands", skip(state, names))]
+pub async fn import_servers(
+    state: State<'_, AppState>,
+    path: String,
+    names: Vec<String>,
+) -> AppResult<ImportOutcome> {
+    info!(target: "app::commands", path = %path, count = names.len(), "import_servers");
+    crate::import::import(&state, path, names).await
 }

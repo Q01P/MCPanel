@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { ImportDialog } from "./components/ImportDialog";
 import { LogViewer } from "./components/LogViewer";
 import { ServerForm } from "./components/ServerForm";
 import { ServerList } from "./components/ServerList";
@@ -12,6 +13,7 @@ export default function App() {
   const applyEvent = usePanel((s) => s.applyEvent);
   const ingest = useLogs((s) => s.ingest);
   const error = usePanel((s) => s.error);
+  const setImportOpen = usePanel((s) => s.setImportOpen);
   const clearError = usePanel((s) => s.clearError);
 
   useEffect(() => {
@@ -32,6 +34,9 @@ export default function App() {
       <header className="panel-header">
         <h1>MCPanel</h1>
         <span className="tagline">local MCP servers, under control</span>
+        <button type="button" className="import-button" onClick={() => setImportOpen(true)}>
+          Import…
+        </button>
       </header>
 
       {error && (
@@ -47,6 +52,7 @@ export default function App() {
       <LogViewer />
       <Workbench />
       <ServerForm />
+      <ImportDialog />
     </main>
   );
 }
