@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Homebrew cask.** The repository doubles as a tap
+  (`brew tap q01p/mcpanel https://github.com/Q01P/MCPanel` then
+  `brew install --cask q01p/mcpanel/mcpanel`). The cask clears the quarantine
+  flag at install time, so unsigned builds open without the "damaged" dialog.
+- **winget manifests** under `packaging/winget`, in the layout the community
+  repository expects, ready to submit.
+- **Packaging sync workflow.** Publishing a GitHub release opens a pull
+  request that updates the cask and winget manifests from the release's own
+  asset digests and the MSI's ProductCode (`scripts/update-packaging.mjs`).
+- **Signing-ready release workflow.** The macOS legs sign and notarize the
+  app when the Apple signing secrets are configured, and build unsigned
+  exactly as before when they are not.
+
 - **Tools browser** in the workbench: a running server's `tools/list` is
   shown as a list, a selected tool's `inputSchema` is rendered as a form
   (string, number, integer, boolean, and string-enum properties get typed

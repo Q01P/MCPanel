@@ -89,6 +89,45 @@ jobs:
       - name: Enforce lockfile
         run: cargo fetch --locked --manifest-path src-tauri/Cargo.toml
 
+      # Code signing and notarization switch on by themselves once the
+      # secrets exist (see packaging/README.md for which ones). Missing
+      # secrets expand to empty strings, and an empty APPLE_CERTIFICATE would
+      # make the bundler try to import nothing — so only non-empty values are
+      # exported to the job environment, and an unsigned build is the
+      # unchanged default until then.
+      - name: Configure Apple signing (when secrets are present)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -eu
+          exported=0
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                      APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name:-}"
+            if [ -n "$value" ]; then
+              {
+                echo "$name<<__EOF__"
+                echo "$value"
+                echo "__EOF__"
+              } >> "$GITHUB_ENV"
+              exported=$((exported + 1))
+            fi
+          done
+          if [ -n "${APPLE_CERTIFICATE:-}" ]; then
+            echo "::notice::Apple signing enabled ($exported variables set)."
+            if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+              echo "::warning::Signing without notarization: APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID are all required to notarize."
+            fi
+          else
+            echo "::notice::No APPLE_CERTIFICATE secret; building unsigned."
+          fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

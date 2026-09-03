@@ -54,3 +54,7 @@ Notes:
 - CI runs the suite above on Linux, macOS, and Windows, plus a Rust 1.95 (MSRV) check and a <15 MB release-binary size gate; a green local run is the fastest path to a green PR.
 
 For security issues, don't open a PR or issue; see [SECURITY.md](SECURITY.md).
+
+## Releasing
+
+Release mechanics — tagging, the Homebrew tap, winget submission, and enabling code signing — are documented in [`packaging/README.md`](packaging/README.md).

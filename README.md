@@ -18,11 +18,32 @@ MCP servers are the small stdio programs that give AI clients access to tools. T
 
 ## Install
 
+### macOS via Homebrew (recommended)
+
+This repository doubles as a Homebrew tap, so there is nothing else to add:
+
+```bash
+brew tap q01p/mcpanel https://github.com/Q01P/MCPanel
+brew install --cask q01p/mcpanel/mcpanel
+```
+
+The cask clears the download quarantine flag at install time, so the "damaged" dialog described below never appears. `brew upgrade` picks up new releases.
+
+### Windows via winget
+
+```powershell
+winget install Q01P.MCPanel
+```
+
+This works once the manifest in [`packaging/winget`](packaging/winget) is accepted into the community repository; until then, use the installer from Releases below. winget installs the MSI silently, so SmartScreen does not get involved.
+
+### Manual downloads
+
 Grab the latest build from [Releases](https://github.com/Q01P/mcpanel/releases).
 
-> **Heads up: builds are currently unsigned.** Your OS will complain the first time. This is expected for a young open-source project; code signing certificates are on the roadmap.
+> **Heads up: builds are currently unsigned.** Your OS will complain the first time. This is expected for a young open-source project. The release workflow is already set up to sign and notarize macOS builds as soon as a certificate is configured (see [`packaging/README.md`](packaging/README.md)).
 
-### macOS (Apple Silicon & Intel)
+#### macOS (Apple Silicon & Intel)
 
 Download the `.dmg`. Gatekeeper will likely claim the app is **"damaged and can't be opened."** It isn't; that's macOS's message for unsigned downloads. Either:
 
@@ -33,11 +54,11 @@ Download the `.dmg`. Gatekeeper will likely claim the app is **"damaged and can'
   xattr -d com.apple.quarantine /Applications/MCPanel.app
   ```
 
-### Windows
+#### Windows
 
 Download the `.msi` or `.exe` installer. SmartScreen will warn on first run: click **More info** → **Run anyway**.
 
-### Linux
+#### Linux
 
 Download the `.deb`, `.rpm`, or `.AppImage`. The AppImage needs no install: `chmod +x` and run. The deb/rpm packages pull in the WebKitGTK runtime automatically.
 
