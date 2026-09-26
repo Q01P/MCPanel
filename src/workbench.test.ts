@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S, TEMPLATES, useWorkbench } from "./workbench";
+import {
+  HISTORY_STORAGE_KEY,
+  MAX_TIMEOUT_S,
+  TEMPLATES,
+  loadHistory,
+  saveHistory,
+  useWorkbench,
+} from "./workbench";
 
 describe("setTimeoutS clamping", () => {
   it("clamps to the gateway's 1..=300 range", () => {
@@ -13,15 +20,14 @@ describe("setTimeoutS clamping", () => {
     expect(useWorkbench.getState().timeoutS).toBe(1);
   });
 
-  it("rounds fractional input and defaults NaN to 1", () => {
+  it("rounds fractional input; null and NaN mean the server's own timeout", () => {
     useWorkbench.getState().setTimeoutS(5.6);
     expect(useWorkbench.getState().timeoutS).toBe(6);
 
+    useWorkbench.getState().setTimeoutS(null);
+    expect(useWorkbench.getState().timeoutS).toBeNull();
     useWorkbench.getState().setTimeoutS(Number.NaN);
-    expect(useWorkbench.getState().timeoutS).toBe(1);
-
-    useWorkbench.getState().setTimeoutS(DEFAULT_TIMEOUT_S);
-    expect(useWorkbench.getState().timeoutS).toBe(DEFAULT_TIMEOUT_S);
+    expect(useWorkbench.getState().timeoutS).toBeNull();
   });
 });
 
@@ -55,5 +61,36 @@ describe("send", () => {
     useWorkbench.setState({ serverId: null, response: null });
     await useWorkbench.getState().send("srv");
     expect(useWorkbench.getState().response).toBeNull();
+  });
+});
+
+describe("history persistence", () => {
+  it("round-trips through localStorage, dropping malformed entries", () => {
+    window.localStorage.removeItem(HISTORY_STORAGE_KEY);
+    expect(loadHistory()).toEqual([]);
+
+    const entry = { seq: 3, serverId: 1, serverName: "srv", body: "{}", at: "10:00:00" };
+    saveHistory([entry]);
+    expect(loadHistory()).toEqual([entry]);
+
+    window.localStorage.setItem(
+      HISTORY_STORAGE_KEY,
+      JSON.stringify([entry, { seq: "nope" }, null, "junk"]),
+    );
+    expect(loadHistory()).toEqual([entry]);
+
+    window.localStorage.setItem(HISTORY_STORAGE_KEY, "{not json");
+    expect(loadHistory()).toEqual([]);
+    window.localStorage.removeItem(HISTORY_STORAGE_KEY);
+  });
+
+  it("addHistory persists and clearHistory empties the store and storage", () => {
+    useWorkbench.setState({ history: [] });
+    useWorkbench.getState().addHistory(1, "srv", '{"method":"ping"}');
+    expect(loadHistory()[0]?.body).toBe('{"method":"ping"}');
+
+    useWorkbench.getState().clearHistory();
+    expect(useWorkbench.getState().history).toEqual([]);
+    expect(loadHistory()).toEqual([]);
   });
 });

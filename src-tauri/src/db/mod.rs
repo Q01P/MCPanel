@@ -40,6 +40,10 @@ const MIGRATIONS: &[&str] = &[
         SELECT id, name, command, args, env, cwd, auto_start FROM servers;
     DROP TABLE servers;
     ALTER TABLE servers_new RENAME TO servers;",
+    // v3: per-server request timeout (NULL = the built-in default) and
+    // opt-in auto-restart after a crash.
+    "ALTER TABLE servers ADD COLUMN request_timeout_s INTEGER;
+    ALTER TABLE servers ADD COLUMN restart_on_crash INTEGER NOT NULL DEFAULT 0;",
 ];
 
 /// An environment value as stored in config. Secrets are only ever a marker:
@@ -61,6 +65,13 @@ pub struct NewServer {
     pub env: BTreeMap<String, EnvValue>,
     pub cwd: Option<String>,
     pub auto_start: bool,
+    /// Bounds the handshake and every request without an explicit
+    /// per-call timeout; `None` means the protocol default (30 s).
+    #[serde(default)]
+    pub request_timeout_s: Option<u64>,
+    /// Respawn with backoff when the process exits unexpectedly.
+    #[serde(default)]
+    pub restart_on_crash: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -72,6 +83,13 @@ pub struct ServerRecord {
     pub env: BTreeMap<String, EnvValue>,
     pub cwd: Option<String>,
     pub auto_start: bool,
+    /// Bounds the handshake and every request without an explicit
+    /// per-call timeout; `None` means the protocol default (30 s).
+    #[serde(default)]
+    pub request_timeout_s: Option<u64>,
+    /// Respawn with backoff when the process exits unexpectedly.
+    #[serde(default)]
+    pub restart_on_crash: bool,
 }
 
 /// Open (creating if needed) and migrate the config database.
@@ -122,8 +140,9 @@ fn map_name_conflict(err: rusqlite::Error, name: &str) -> AppError {
 
 pub fn insert_server(conn: &Connection, new: &NewServer) -> AppResult<ServerRecord> {
     conn.execute(
-        "INSERT INTO servers (name, command, args, env, cwd, auto_start)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO servers (name, command, args, env, cwd, auto_start, request_timeout_s,
+                              restart_on_crash)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             new.name,
             new.command,
@@ -131,6 +150,8 @@ pub fn insert_server(conn: &Connection, new: &NewServer) -> AppResult<ServerReco
             serde_json::to_string(&new.env)?,
             new.cwd,
             new.auto_start,
+            new.request_timeout_s.map(|t| t as i64),
+            new.restart_on_crash,
         ],
     )
     .map_err(|e| map_name_conflict(e, &new.name))?;
@@ -139,7 +160,8 @@ pub fn insert_server(conn: &Connection, new: &NewServer) -> AppResult<ServerReco
 
 pub fn get_server(conn: &Connection, id: ServerId) -> AppResult<ServerRecord> {
     conn.query_row(
-        "SELECT id, name, command, args, env, cwd, auto_start FROM servers WHERE id = ?1",
+        "SELECT id, name, command, args, env, cwd, auto_start, request_timeout_s, restart_on_crash
+         FROM servers WHERE id = ?1",
         params![id],
         row_to_record,
     )
@@ -151,7 +173,8 @@ pub fn get_server(conn: &Connection, id: ServerId) -> AppResult<ServerRecord> {
 
 pub fn list_servers(conn: &Connection) -> AppResult<Vec<ServerRecord>> {
     let mut statement = conn.prepare(
-        "SELECT id, name, command, args, env, cwd, auto_start FROM servers ORDER BY name",
+        "SELECT id, name, command, args, env, cwd, auto_start, request_timeout_s, restart_on_crash
+         FROM servers ORDER BY name",
     )?;
     let rows = statement.query_map([], row_to_record)?;
     let mut servers = Vec::new();
@@ -165,7 +188,8 @@ pub fn update_server(conn: &Connection, record: &ServerRecord) -> AppResult<()> 
     let changed = conn
         .execute(
             "UPDATE servers
-         SET name = ?2, command = ?3, args = ?4, env = ?5, cwd = ?6, auto_start = ?7
+         SET name = ?2, command = ?3, args = ?4, env = ?5, cwd = ?6, auto_start = ?7,
+             request_timeout_s = ?8, restart_on_crash = ?9
          WHERE id = ?1",
             params![
                 record.id,
@@ -175,6 +199,8 @@ pub fn update_server(conn: &Connection, record: &ServerRecord) -> AppResult<()> 
                 serde_json::to_string(&record.env)?,
                 record.cwd,
                 record.auto_start,
+                record.request_timeout_s.map(|t| t as i64),
+                record.restart_on_crash,
             ],
         )
         .map_err(|e| map_name_conflict(e, &record.name))?;
@@ -206,6 +232,8 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AppResult<ServerRe
             env: serde_json::from_str(&env)?,
             cwd: row.get(5)?,
             auto_start: row.get(6)?,
+            request_timeout_s: row.get::<_, Option<i64>>(7)?.map(|t| t.max(0) as u64),
+            restart_on_crash: row.get(8)?,
         })
     })())
 }
@@ -230,6 +258,8 @@ mod tests {
             ]),
             cwd: Some("/tmp".into()),
             auto_start: true,
+            request_timeout_s: Some(90),
+            restart_on_crash: true,
         }
     }
 
@@ -244,6 +274,8 @@ mod tests {
         let mut updated = created.clone();
         updated.command = "uvx".into();
         updated.auto_start = false;
+        updated.request_timeout_s = None;
+        updated.restart_on_crash = false;
         updated.env.insert("EXTRA".into(), EnvValue::Secret);
         update_server(&conn, &updated).unwrap();
         assert_eq!(get_server(&conn, created.id).unwrap(), updated);
@@ -361,6 +393,42 @@ mod tests {
 
         drop(conn);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// A v2 row (no timeout/restart columns) reads back with the defaults,
+    /// and older callers that omit the new fields still deserialize.
+    #[test]
+    fn v2_rows_get_v3_defaults_and_old_payloads_still_parse() {
+        let path =
+            std::env::temp_dir().join(format!("mcpanel-db-v3-test-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            for (index, batch) in MIGRATIONS.iter().take(2).enumerate() {
+                conn.execute_batch(batch).unwrap();
+                conn.pragma_update(None, "user_version", (index + 1) as i64)
+                    .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO servers (name, command) VALUES ('old', 'echo')",
+                [],
+            )
+            .unwrap();
+            let _ = &mut conn;
+        }
+        let conn = open(&path).unwrap();
+        let record = &list_servers(&conn).unwrap()[0];
+        assert_eq!(record.request_timeout_s, None);
+        assert!(!record.restart_on_crash);
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
+
+        let parsed: NewServer = serde_json::from_str(
+            r#"{"name":"n","command":"c","args":[],"env":{},"cwd":null,"auto_start":false}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.request_timeout_s, None);
+        assert!(!parsed.restart_on_crash);
     }
 
     #[test]

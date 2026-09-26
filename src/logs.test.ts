@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEvent } from "./types";
-import { LOG_CAP, resetLogBatching, useLogs } from "./logs";
+import { LOG_CAP, logEntryFromNotification, resetLogBatching, useLogs } from "./logs";
 
 const line = (id: number, text: string): AppEvent => ({
   type: "log",
@@ -56,6 +56,42 @@ describe("useLogs.ingest", () => {
     expect(entry?.text).toContain("42");
   });
 
+  it("turns notifications/message into a levelled mcp entry, ignoring other notifications", () => {
+    useLogs.getState().ingest({
+      type: "notification",
+      server_id: 1,
+      payload: {
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { level: "warning", logger: "db", data: "slow query" },
+      },
+    });
+    useLogs.getState().ingest({
+      type: "notification",
+      server_id: 1,
+      payload: { jsonrpc: "2.0", method: "notifications/tools/list_changed" },
+    });
+    vi.advanceTimersByTime(100);
+
+    const entries = useLogs.getState().byServer[1];
+    expect(entries).toHaveLength(1);
+    expect(entries?.[0]).toMatchObject({
+      kind: "line",
+      stream: "mcp",
+      level: "warning",
+      text: "[warning] db: slow query",
+    });
+  });
+
+  it("renders notification_gap events as gap markers", () => {
+    useLogs.getState().ingest({ type: "notification_gap", server_id: 1, dropped: 9 });
+    vi.advanceTimersByTime(100);
+    const entry = useLogs.getState().byServer[1]?.[0];
+    expect(entry?.kind).toBe("gap");
+    expect(entry?.stream).toBe("mcp");
+    expect(entry?.text).toContain("9 notifications");
+  });
+
   it("accumulates lagged markers without touching the buffers", () => {
     useLogs.getState().ingest({ type: "lagged", missed: 3 });
     useLogs.getState().ingest({ type: "lagged", missed: 4 });
@@ -97,5 +133,26 @@ describe("useLogs.drop", () => {
     useLogs.getState().ingest(line(1, "posthumous"));
     vi.advanceTimersByTime(100);
     expect(useLogs.getState().byServer[1]).toBeUndefined();
+  });
+});
+
+describe("logEntryFromNotification", () => {
+  it("serializes structured data compactly and defaults an unknown level to info", () => {
+    const entry = logEntryFromNotification({
+      method: "notifications/message",
+      params: { level: "loud", data: { ok: true, n: 2 } },
+    });
+    expect(entry).toEqual({ stream: "mcp", level: "info", text: '[info] {"ok":true,"n":2}' });
+  });
+
+  it("copes with missing params and rejects non-log methods", () => {
+    expect(logEntryFromNotification({ method: "notifications/message" })).toEqual({
+      stream: "mcp",
+      level: "info",
+      text: "[info] null",
+    });
+    expect(logEntryFromNotification({ method: "notifications/progress" })).toBeNull();
+    expect(logEntryFromNotification("junk")).toBeNull();
+    expect(logEntryFromNotification(null)).toBeNull();
   });
 });

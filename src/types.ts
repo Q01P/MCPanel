@@ -14,10 +14,24 @@ export interface ServerRecord {
   env: Record<string, EnvValue>;
   cwd: string | null;
   auto_start: boolean;
+  /** Bounds the handshake and any request without its own timeout;
+   * null = the built-in default. */
+  request_timeout_s: number | null;
+  /** Respawn with backoff after an unexpected exit. */
+  restart_on_crash: boolean;
+}
+
+/** What the `initialize` handshake yielded (backend: protocol.rs). */
+export interface ServerHandshake {
+  protocol_version: string;
+  capabilities: Record<string, unknown>;
+  server_info: Record<string, unknown>;
 }
 
 export interface ServerOverview extends ServerRecord {
   status: ServerStatus;
+  /** Present exactly while `status` is running. */
+  handshake: ServerHandshake | null;
 }
 
 export type NewServer = Omit<ServerRecord, "id">;
@@ -31,6 +45,8 @@ export type AppEvent =
   | { type: "notification"; server_id: number; payload: unknown }
   // Notifications lost to backpressure on the backend's advisory channel.
   | { type: "notification_gap"; server_id: number; dropped: number }
+  // Published right after a `running` status change.
+  | { type: "handshake"; server_id: number; handshake: ServerHandshake }
   // Synthetic gateway marker: this SSE subscriber fell behind the broadcast.
   | { type: "lagged"; missed: number };
 
@@ -84,4 +100,21 @@ export interface FailedImport {
 export interface ImportOutcome {
   imported: ImportedServer[];
   failed: FailedImport[];
+}
+
+// Export to other clients' config shape (backend: export.rs).
+
+export type ExportFlavor = "mcp_servers" | "vs_code";
+
+export interface ExportRequest {
+  ids: number[];
+  flavor: ExportFlavor;
+  /** Only ever true after the user confirmed in the dialog. */
+  include_secrets: boolean;
+}
+
+export interface ExportOutcome {
+  text: string;
+  /** "server/KEY" for each secret written as a `${KEY}` placeholder. */
+  placeholders: string[];
 }

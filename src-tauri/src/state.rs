@@ -61,6 +61,13 @@ pub enum AppEvent {
     /// Notifications lost to backpressure on the advisory channel — the
     /// notification analogue of [`AppEvent::LogGap`].
     NotificationGap { server_id: ServerId, dropped: u64 },
+    /// What the `initialize` handshake yielded, published right after the
+    /// `Running` status so the UI can show server identity and capabilities
+    /// without a list round trip.
+    Handshake {
+        server_id: ServerId,
+        handshake: ServerHandshake,
+    },
 }
 
 // serde's `rc` feature is deliberately off; log lines stay `Arc<str>` across
@@ -140,6 +147,17 @@ pub struct AppState {
     /// and the write, so without this two concurrent mutations lose one
     /// side's changes (e.g. an update clobbering a fresh secret marker).
     config_write: Arc<tokio::sync::Mutex<()>>,
+    /// Crash-restart bookkeeping per server: how many respawns in the
+    /// current streak, and the timer of a restart not yet fired.
+    restarts: Arc<DashMap<ServerId, RestartState>>,
+}
+
+/// Auto-restart streak for one server. `pending` is the cancellation token
+/// of a scheduled restart; `stop`/`remove` cancel it and clear the streak.
+#[derive(Default)]
+pub struct RestartState {
+    pub attempts: u32,
+    pub pending: Option<CancellationToken>,
 }
 
 /// Run a blocking closure on the blocking pool. A panicked task surfaces as
@@ -165,7 +183,51 @@ impl AppState {
             db: Arc::new(Mutex::new(db)),
             events,
             config_write: Arc::new(tokio::sync::Mutex::new(())),
+            restarts: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Bump the restart streak (or start a fresh one when `reset`) and
+    /// arm a new pending token for it; returns the attempt number and the
+    /// token the scheduled restart must select on.
+    pub fn arm_restart(&self, id: ServerId, reset: bool) -> (u32, CancellationToken) {
+        let mut entry = self.restarts.entry(id).or_default();
+        if reset {
+            entry.attempts = 0;
+        }
+        entry.attempts += 1;
+        let token = CancellationToken::new();
+        if let Some(previous) = entry.pending.replace(token.clone()) {
+            previous.cancel();
+        }
+        (entry.attempts, token)
+    }
+
+    /// The scheduled restart for `token` is firing (or gave up): drop the
+    /// pending marker, but keep the streak count for the next crash.
+    pub fn restart_fired(&self, id: ServerId, token: &CancellationToken) {
+        if let Some(mut entry) = self.restarts.get_mut(&id)
+            && entry.pending.as_ref().is_some_and(|p| p == token)
+        {
+            entry.pending = None;
+        }
+    }
+
+    /// A deliberate stop/remove: cancel any scheduled restart and forget the
+    /// streak — the next crash starts counting from one again.
+    pub fn cancel_restarts(&self, id: ServerId) {
+        if let Some((_, state)) = self.restarts.remove(&id)
+            && let Some(pending) = state.pending
+        {
+            pending.cancel();
+        }
+    }
+
+    /// Whether a crash-restart is scheduled and not yet fired.
+    pub fn restart_pending(&self, id: ServerId) -> bool {
+        self.restarts
+            .get(&id)
+            .is_some_and(|entry| entry.pending.is_some())
     }
 
     /// Hold this guard across a config read-modify-write; see `config_write`.
@@ -280,6 +342,7 @@ impl AppState {
     /// cancels first) can never be resurrected by a late install. On failure
     /// the caller owns the child and must kill it.
     pub fn try_install_runtime(&self, id: ServerId, runtime: RunningServer) -> bool {
+        let handshake = runtime.handshake.clone();
         let installed = match self.registry.entry(id) {
             dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
                 let entry = occupied.get_mut();
@@ -300,6 +363,10 @@ impl AppState {
                 server_id: id,
                 status: ServerStatus::Running,
             });
+            self.publish(AppEvent::Handshake {
+                server_id: id,
+                handshake,
+            });
         }
         installed
     }
@@ -308,6 +375,13 @@ impl AppState {
         self.registry
             .get(&id)
             .and_then(|entry| entry.runtime.clone())
+    }
+
+    /// The handshake of a running server; `None` in every other state.
+    pub fn handshake(&self, id: ServerId) -> Option<ServerHandshake> {
+        self.registry
+            .get(&id)
+            .and_then(|entry| entry.runtime.as_ref().map(|r| r.handshake.clone()))
     }
 
     /// Run a closure against the shared SQLite connection on the blocking

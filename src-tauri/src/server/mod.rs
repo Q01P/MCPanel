@@ -213,12 +213,10 @@ struct ForwardQuery {
 }
 
 /// Clamp the caller's `?timeout_s=` to `1..=MAX_FORWARD_TIMEOUT` (spec §3);
-/// absent means the protocol default. Always strictly below the tower
-/// backstop, so the two can never race.
-fn forward_timeout(timeout_s: Option<u64>) -> Duration {
-    timeout_s
-        .map(|s| Duration::from_secs(s.clamp(1, MAX_FORWARD_TIMEOUT.as_secs())))
-        .unwrap_or(crate::mcp::protocol::DEFAULT_REQUEST_TIMEOUT)
+/// absent means the server's own configured timeout. Always strictly below
+/// the tower backstop, so the two can never race.
+fn forward_timeout(timeout_s: Option<u64>) -> Option<Duration> {
+    timeout_s.map(|s| Duration::from_secs(s.clamp(1, MAX_FORWARD_TIMEOUT.as_secs())))
 }
 
 /// `POST /mcp/{server_id}`: forward JSON-RPC to a *running* server. RPC-level
@@ -252,12 +250,21 @@ async fn mcp_forward(
         return Ok(Json(json!({ "accepted": true })));
     };
 
-    let timeout = forward_timeout(query.timeout_s);
-    match runtime
-        .client
-        .request_with_timeout(&request.method, request.params, timeout)
-        .await
-    {
+    let sent = match forward_timeout(query.timeout_s) {
+        Some(timeout) => {
+            runtime
+                .client
+                .request_with_timeout(&request.method, request.params, timeout)
+                .await
+        }
+        None => {
+            runtime
+                .client
+                .request(&request.method, request.params)
+                .await
+        }
+    };
+    match sent {
         Ok(result) => Ok(Json(json!({
             "jsonrpc": "2.0",
             "id": caller_id,
@@ -482,13 +489,12 @@ mod tests {
 
     #[test]
     fn forward_timeout_clamps_to_gateway_bounds() {
-        use crate::mcp::protocol::DEFAULT_REQUEST_TIMEOUT;
-        assert_eq!(forward_timeout(None), DEFAULT_REQUEST_TIMEOUT);
-        assert_eq!(forward_timeout(Some(0)), Duration::from_secs(1));
-        assert_eq!(forward_timeout(Some(1)), Duration::from_secs(1));
-        assert_eq!(forward_timeout(Some(42)), Duration::from_secs(42));
-        assert_eq!(forward_timeout(Some(300)), MAX_FORWARD_TIMEOUT);
-        assert_eq!(forward_timeout(Some(u64::MAX)), MAX_FORWARD_TIMEOUT);
+        assert_eq!(forward_timeout(None), None, "absent = the server's own");
+        assert_eq!(forward_timeout(Some(0)), Some(Duration::from_secs(1)));
+        assert_eq!(forward_timeout(Some(1)), Some(Duration::from_secs(1)));
+        assert_eq!(forward_timeout(Some(42)), Some(Duration::from_secs(42)));
+        assert_eq!(forward_timeout(Some(300)), Some(MAX_FORWARD_TIMEOUT));
+        assert_eq!(forward_timeout(Some(u64::MAX)), Some(MAX_FORWARD_TIMEOUT));
         // The clamp ceiling must stay strictly below the tower backstop.
         assert!(MAX_FORWARD_TIMEOUT < GATEWAY_BACKSTOP_TIMEOUT);
     }

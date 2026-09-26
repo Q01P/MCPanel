@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { ExportDialog } from "./components/ExportDialog";
 import { ImportDialog } from "./components/ImportDialog";
 import { LogViewer } from "./components/LogViewer";
 import { ServerForm } from "./components/ServerForm";
@@ -6,14 +7,22 @@ import { ServerList } from "./components/ServerList";
 import { Workbench } from "./components/Workbench";
 import { connectEvents } from "./events";
 import { useLogs } from "./logs";
+import { usePrompts } from "./prompts";
+import { useResources } from "./resources";
 import { usePanel } from "./store";
+import { useTools } from "./tools";
 
 export default function App() {
   const load = usePanel((s) => s.load);
   const applyEvent = usePanel((s) => s.applyEvent);
   const ingest = useLogs((s) => s.ingest);
+  const applyToolsEvent = useTools((s) => s.applyEvent);
+  const applyResourcesEvent = useResources((s) => s.applyEvent);
+  const applyPromptsEvent = usePrompts((s) => s.applyEvent);
   const error = usePanel((s) => s.error);
   const setImportOpen = usePanel((s) => s.setImportOpen);
+  const setExportOpen = usePanel((s) => s.setExportOpen);
+  const haveServers = usePanel((s) => s.servers.length > 0);
   const clearError = usePanel((s) => s.clearError);
 
   useEffect(() => {
@@ -22,12 +31,15 @@ export default function App() {
       (event) => {
         applyEvent(event);
         ingest(event);
+        applyToolsEvent(event);
+        applyResourcesEvent(event);
+        applyPromptsEvent(event);
       },
       // Every `ready` (first connect and reconnects) resyncs the list:
       // statuses that changed while the stream was down never replay.
       () => void load(),
     );
-  }, [load, applyEvent, ingest]);
+  }, [load, applyEvent, ingest, applyToolsEvent, applyResourcesEvent, applyPromptsEvent]);
 
   return (
     <main className="panel">
@@ -36,6 +48,15 @@ export default function App() {
         <span className="tagline">local MCP servers, under control</span>
         <button type="button" className="import-button" onClick={() => setImportOpen(true)}>
           Import…
+        </button>
+        <button
+          type="button"
+          className="import-button export-button"
+          onClick={() => setExportOpen(true)}
+          disabled={!haveServers}
+          title={haveServers ? "write these servers as a client config" : "nothing to export yet"}
+        >
+          Export…
         </button>
       </header>
 
@@ -53,6 +74,7 @@ export default function App() {
       <Workbench />
       <ServerForm />
       <ImportDialog />
+      <ExportDialog />
     </main>
   );
 }

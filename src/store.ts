@@ -20,6 +20,8 @@ interface PanelState {
   editing: ServerOverview | null;
   /** The import dialog is open. */
   importOpen: boolean;
+  /** The export dialog is open. */
+  exportOpen: boolean;
   load: () => Promise<void>;
   resync: () => void;
   /** Mutations resolve truthy on success so callers can keep user input
@@ -30,8 +32,10 @@ interface PanelState {
   deleteSecret: (id: number, key: string) => Promise<boolean>;
   remove: (id: number) => Promise<boolean>;
   toggle: (id: number, run: boolean) => Promise<boolean>;
+  restart: (id: number) => Promise<boolean>;
   setEditing: (server: ServerOverview | null) => void;
   setImportOpen: (open: boolean) => void;
+  setExportOpen: (open: boolean) => void;
   /** Import reads return null on failure, having set the error banner —
    * same contract as the mutations above. */
   discoverImports: () => Promise<DiscoveredConfig[] | null>;
@@ -52,6 +56,7 @@ export const usePanel = create<PanelState>((set, get) => ({
   error: null,
   editing: null,
   importOpen: false,
+  exportOpen: false,
 
   load: async () => {
     try {
@@ -137,6 +142,17 @@ export const usePanel = create<PanelState>((set, get) => ({
     }
   },
 
+  restart: async (id) => {
+    try {
+      await api.restartServer(id);
+      return true;
+    } catch (error) {
+      set({ error: api.describeError(error) });
+      await get().load();
+      return false;
+    }
+  },
+
   resync: () => {
     window.clearTimeout(resyncTimer);
     resyncTimer = window.setTimeout(() => void get().load(), 250);
@@ -149,10 +165,25 @@ export const usePanel = create<PanelState>((set, get) => ({
       get().resync();
       return;
     }
+    if (event.type === "handshake") {
+      set({
+        servers: get().servers.map((server) =>
+          server.id === event.server_id ? { ...server, handshake: event.handshake } : server,
+        ),
+      });
+      return;
+    }
     if (event.type !== "status_changed") return;
     set({
       servers: get().servers.map((server) =>
-        server.id === event.server_id ? { ...server, status: event.status } : server,
+        server.id === event.server_id
+          ? {
+              ...server,
+              status: event.status,
+              // The handshake belongs to one process; it dies with Running.
+              handshake: event.status.state === "running" ? server.handshake : null,
+            }
+          : server,
       ),
     });
   },
@@ -160,6 +191,8 @@ export const usePanel = create<PanelState>((set, get) => ({
   setEditing: (server) => set({ editing: server }),
 
   setImportOpen: (open) => set({ importOpen: open }),
+
+  setExportOpen: (open) => set({ exportOpen: open }),
 
   discoverImports: async () => {
     try {

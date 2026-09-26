@@ -33,7 +33,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
@@ -88,7 +88,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - run: npm ci
@@ -103,8 +103,8 @@ jobs:
         run: npm test
 
   # rust-version = "1.95" is declared in Cargo.toml; build it or it drifts.
-  # (1.85 was the original target; keyring 4.1.5 declares 1.88, and
-  # libsqlite3-sys 0.38.1 needs cfg_select! — stable since 1.95 — while
+  # (1.85 was the original target; keyring 4.2.0 declares 1.88, and
+  # libsqlite3-sys 0.38.2 needs cfg_select! — stable since 1.95 — while
   # declaring no rust-version at all. 1.95 is the verified floor.)
   msrv:
     runs-on: ubuntu-latest
@@ -120,7 +120,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - uses: dtolnay/rust-toolchain@1.95

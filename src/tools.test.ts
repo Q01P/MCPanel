@@ -7,11 +7,19 @@ vi.mock("./rpc", async (importOriginal) => ({
 
 import { rpc } from "./rpc";
 import {
+  INPUTS_STORAGE_KEY,
+  annotationBadges,
   buildArguments,
   callBody,
   describeResult,
+  descriptionWarning,
+  estimateTokens,
   formFromSchema,
   initialValues,
+  listCost,
+  recallInputs,
+  rememberInputs,
+  toolCost,
   useTools,
 } from "./tools";
 import { useWorkbench } from "./workbench";
@@ -172,11 +180,97 @@ describe("callBody", () => {
   });
 });
 
+describe("annotations and cost", () => {
+  it("badges only the hints a tool sets", () => {
+    expect(annotationBadges({ name: "plain" })).toEqual([]);
+    expect(
+      annotationBadges({
+        name: "rm",
+        annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      }).map((b) => b.label),
+    ).toEqual(["destructive", "idempotent", "closed world"]);
+    expect(
+      annotationBadges({ name: "get", annotations: { readOnlyHint: true, destructiveHint: false } }).map(
+        (b) => b.label,
+      ),
+    ).toEqual(["read-only"]);
+    expect(
+      annotationBadges({ name: "put", annotations: { destructiveHint: false } }).map((b) => b.label),
+    ).toEqual(["non-destructive"]);
+  });
+
+  it("estimates tokens at four characters each and sums a list", () => {
+    expect(estimateTokens("")).toBe(0);
+    expect(estimateTokens("abcde")).toBe(2);
+    const tool = { name: "echo", description: "x".repeat(96) };
+    expect(toolCost(tool)).toBe(Math.ceil(JSON.stringify(tool).length / 4));
+    expect(listCost([tool, tool])).toBe(2 * toolCost(tool));
+  });
+
+  it("warns on long descriptions at the Inspector thresholds", () => {
+    expect(descriptionWarning({ name: "a", description: "x".repeat(499) })).toBeNull();
+    expect(descriptionWarning({ name: "a", description: "x".repeat(500) })).toMatch(/^long/);
+    expect(descriptionWarning({ name: "a", description: "x".repeat(1000) })).toMatch(/^very long/);
+  });
+});
+
+describe("remembered inputs", () => {
+  beforeEach(() => window.localStorage.removeItem(INPUTS_STORAGE_KEY));
+
+  it("recalls what was typed, per server and tool, only for fields that still fit", () => {
+    const form = formFromSchema(ECHO_SCHEMA);
+    rememberInputs(7, "echo", { message: "hi", shout: true, repeat: "3", gone: "x" });
+
+    const recalled = recallInputs(7, "echo", form);
+    expect(recalled.message).toBe("hi");
+    expect(recalled.shout).toBe(true);
+    expect(recalled.repeat).toBe("3");
+    expect(recalled).not.toHaveProperty("gone");
+
+    // Another server or tool starts from the schema defaults.
+    expect(recallInputs(8, "echo", form).message).toBe("");
+    expect(recallInputs(7, "other", form).message).toBe("");
+
+    // A field whose kind changed keeps its default rather than a stale value.
+    rememberInputs(7, "echo", { shout: "yes" });
+    expect(recallInputs(7, "echo", form).shout).toBe(false);
+
+    // Freeform tools remember their JSON blob.
+    const freeform = formFromSchema(undefined);
+    rememberInputs(7, "blob", { "*": '{"a":1}' });
+    expect(recallInputs(7, "blob", freeform)["*"]).toBe('{"a":1}');
+  });
+
+  it("survives garbage in storage", () => {
+    window.localStorage.setItem(INPUTS_STORAGE_KEY, "[1,2");
+    expect(recallInputs(7, "echo", formFromSchema(ECHO_SCHEMA)).message).toBe("");
+    rememberInputs(7, "echo", { message: "fresh" });
+    expect(recallInputs(7, "echo", formFromSchema(ECHO_SCHEMA)).message).toBe("fresh");
+  });
+});
+
 describe("useTools store", () => {
   beforeEach(() => {
     rpcMock.mockReset();
+    window.localStorage.removeItem(INPUTS_STORAGE_KEY);
     useTools.setState({ ...useTools.getInitialState() });
     useWorkbench.setState({ history: [] });
+  });
+
+  it("re-selecting a tool after a reload brings back the last typed inputs", async () => {
+    const schema = { type: "object", properties: { message: { type: "string" } } };
+    const listing = { kind: "result" as const, result: { tools: [{ name: "echo", inputSchema: schema }] } };
+    rpcMock.mockResolvedValueOnce(listing);
+    await useTools.getState().load(7);
+    useTools.getState().select("echo");
+    useTools.getState().setValue("message", "typed once");
+
+    // Server restarted: the browser reloads and re-selects.
+    rpcMock.mockResolvedValueOnce(listing);
+    await useTools.getState().load(7);
+    expect(useTools.getState().selected).toBeNull();
+    useTools.getState().select("echo");
+    expect(useTools.getState().values.message).toBe("typed once");
   });
 
   it("follows nextCursor across pages and stops when it is absent", async () => {
@@ -193,6 +287,43 @@ describe("useTools store", () => {
     expect(rpcMock).toHaveBeenCalledTimes(2);
     expect(rpcMock.mock.calls[1]?.[2]).toEqual({ cursor: "p2" });
     expect(useTools.getState().loading).toBe(false);
+  });
+
+  it("re-lists on tools/list_changed from the shown server, keeping a surviving selection", async () => {
+    const schema = { type: "object", properties: { message: { type: "string" } } };
+    rpcMock.mockResolvedValueOnce({
+      kind: "result",
+      result: { tools: [{ name: "echo", inputSchema: schema }, { name: "doomed" }] },
+    });
+    await useTools.getState().load(7);
+    useTools.getState().select("echo");
+    useTools.getState().setValue("message", "typed");
+
+    // Another server's change is not ours.
+    useTools.getState().applyEvent({
+      type: "notification",
+      server_id: 8,
+      payload: { method: "notifications/tools/list_changed" },
+    });
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+
+    rpcMock.mockResolvedValueOnce({
+      kind: "result",
+      result: { tools: [{ name: "echo", inputSchema: schema }, { name: "new" }] },
+    });
+    useTools.getState().applyEvent({
+      type: "notification",
+      server_id: 7,
+      payload: { method: "notifications/tools/list_changed" },
+    });
+    await vi.waitFor(() => expect(useTools.getState().tools.map((t) => t.name)).toEqual(["echo", "new"]));
+    expect(useTools.getState().selected).toBe("echo");
+    expect(useTools.getState().loading).toBe(false);
+
+    // A selection whose tool vanished is cleared rather than left dangling.
+    rpcMock.mockResolvedValueOnce({ kind: "result", result: { tools: [{ name: "other" }] } });
+    await useTools.getState().refresh();
+    expect(useTools.getState().selected).toBeNull();
   });
 
   it("surfaces a list failure and leaves no stale tools", async () => {

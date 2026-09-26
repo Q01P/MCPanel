@@ -49,6 +49,8 @@ async fn add_with_secret_marker(state: &AppState, name: &str, key: &str) -> Serv
             env: BTreeMap::from([(key.into(), EnvValue::Secret)]),
             cwd: None,
             auto_start: false,
+            request_timeout_s: None,
+            restart_on_crash: false,
         },
     )
     .await
@@ -98,6 +100,8 @@ fn resolve_env_mixes_plain_and_secret() {
         ]),
         cwd: None,
         auto_start: false,
+        request_timeout_s: None,
+        restart_on_crash: false,
     };
 
     let resolved = secrets::resolve_env(&record).expect("resolve");
@@ -122,6 +126,8 @@ async fn start_fails_when_secret_is_unresolvable() {
             env: BTreeMap::from([("MISSING".into(), EnvValue::Secret)]),
             cwd: None,
             auto_start: false,
+            request_timeout_s: None,
+            restart_on_crash: false,
         },
     )
     .await

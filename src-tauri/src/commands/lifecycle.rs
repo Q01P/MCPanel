@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::db::{self, EnvValue, NewServer, ServerRecord};
 use crate::error::{AppError, AppResult};
 use crate::mcp::process::{ManagedChild, ProcessConfig, SHUTDOWN_GRACE, spawn};
-use crate::mcp::protocol::{DEFAULT_REQUEST_TIMEOUT, connect};
+use crate::mcp::protocol::{DEFAULT_REQUEST_TIMEOUT, ServerHandshake, connect};
 use crate::mcp::stream::{StreamEvent, attach};
 use crate::state::{AppEvent, AppState, LogStream, RunningServer, ServerId, ServerStatus};
 
@@ -26,6 +26,27 @@ const KILL_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 /// Bound on waiting for a cancelled start to settle: covers a SIGKILL, the
 /// reap, and margin — never the 30 s handshake, which the cancel interrupts.
 const CANCEL_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Upper bound on a configured per-server timeout: an hour is already far
+/// beyond any tool a person would wait on interactively.
+pub const MAX_SERVER_TIMEOUT_S: u64 = 3600;
+
+/// Crash-restart policy: exponential backoff from one second, capped, and a
+/// bounded streak — a server that keeps dying is left Errored with a reason
+/// rather than respawned forever. A server that ran this long before
+/// crashing has earned a fresh streak.
+pub const RESTART_MAX_ATTEMPTS: u32 = 5;
+const RESTART_BASE_DELAY: Duration = Duration::from_secs(1);
+const RESTART_MAX_DELAY: Duration = Duration::from_secs(30);
+const RESTART_HEALTHY_UPTIME: Duration = Duration::from_secs(60);
+
+/// Delay before restart number `attempt` (1-based): 1 s, 2 s, 4 s … capped.
+pub fn restart_delay(attempt: u32) -> Duration {
+    let factor = 2u32.saturating_pow(attempt.saturating_sub(1).min(16));
+    RESTART_BASE_DELAY
+        .saturating_mul(factor)
+        .min(RESTART_MAX_DELAY)
+}
 
 /// How `run_startup` ended when it didn't fail: the server reached Running,
 /// or a concurrent stop/remove cancelled the attempt (and any spawned child
@@ -41,6 +62,7 @@ pub async fn list(state: &AppState) -> AppResult<Vec<ServerOverview>> {
         .into_iter()
         .map(|record| ServerOverview {
             status: state.status(record.id),
+            handshake: state.handshake(record.id),
             record,
         })
         .collect())
@@ -52,16 +74,27 @@ pub struct ServerOverview {
     #[serde(flatten)]
     pub record: ServerRecord,
     pub status: ServerStatus,
+    /// Present exactly while `status` is `Running`.
+    pub handshake: Option<ServerHandshake>,
 }
 
 /// Reject configs that can only fail later and worse: a blank name or
-/// command, a working directory that doesn't exist, an empty env key.
+/// command, a working directory that doesn't exist, an empty env key, a
+/// timeout of zero or beyond the ceiling.
 fn validate_config<'a>(
     name: &str,
     command: &str,
     cwd: Option<&str>,
     mut env_keys: impl Iterator<Item = &'a String>,
+    request_timeout_s: Option<u64>,
 ) -> AppResult<()> {
+    if let Some(timeout) = request_timeout_s
+        && !(1..=MAX_SERVER_TIMEOUT_S).contains(&timeout)
+    {
+        return Err(AppError::InvalidInput(format!(
+            "request timeout must be between 1 and {MAX_SERVER_TIMEOUT_S} seconds"
+        )));
+    }
     if name.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "server name must not be empty".into(),
@@ -86,7 +119,13 @@ fn validate_config<'a>(
 }
 
 pub async fn add(state: &AppState, new: NewServer) -> AppResult<ServerRecord> {
-    validate_config(&new.name, &new.command, new.cwd.as_deref(), new.env.keys())?;
+    validate_config(
+        &new.name,
+        &new.command,
+        new.cwd.as_deref(),
+        new.env.keys(),
+        new.request_timeout_s,
+    )?;
     state
         .with_db(move |conn| db::insert_server(conn, &new))
         .await
@@ -98,6 +137,7 @@ pub async fn update(state: &AppState, record: ServerRecord) -> AppResult<()> {
         &record.command,
         record.cwd.as_deref(),
         record.env.keys(),
+        record.request_timeout_s,
     )?;
     // Read-modify-write over a released connection — hold the config lock so
     // a concurrent set/delete_secret can't have its marker clobbered.
@@ -150,8 +190,18 @@ pub async fn remove(state: &AppState, id: ServerId) -> AppResult<()> {
     stop(state, id).await
 }
 
+/// Start with the server's own configured timeout (or the default). A
+/// deliberate start also ends any crash-restart streak: the user took over.
 pub async fn start(state: &AppState, id: ServerId) -> AppResult<()> {
-    start_with_timeout(state, id, DEFAULT_REQUEST_TIMEOUT).await
+    start_with_timeout(state, id, None).await
+}
+
+/// Stop (if running or mid-start) and start again — the edit → restart →
+/// retest loop as one click. A failed stop is reported rather than papered
+/// over with a start that would only race the old process.
+pub async fn restart(state: &AppState, id: ServerId) -> AppResult<()> {
+    stop(state, id).await?;
+    start(state, id).await
 }
 
 /// Launch-time sweep: start every server marked `auto_start`, concurrently.
@@ -196,11 +246,23 @@ async fn futures_join_all<F: Future<Output = ()> + Send + 'static>(
     }
 }
 
-/// `request_timeout` also bounds the handshake — injectable for tests.
+/// `request_timeout` overrides the server's configured timeout (which also
+/// bounds the handshake) — injectable for tests.
 pub async fn start_with_timeout(
     state: &AppState,
     id: ServerId,
-    request_timeout: Duration,
+    request_timeout: Option<Duration>,
+) -> AppResult<()> {
+    state.cancel_restarts(id);
+    start_inner(state, id, request_timeout).await
+}
+
+/// The start proper, streak untouched — what an automatic restart uses so
+/// its own attempts keep counting toward the cap.
+async fn start_inner(
+    state: &AppState,
+    id: ServerId,
+    request_timeout: Option<Duration>,
 ) -> AppResult<()> {
     let Some(guard) = state.try_begin_start(id) else {
         return Ok(()); // already starting or running — toggles are idempotent
@@ -238,7 +300,7 @@ pub async fn start_with_timeout(
 async fn run_startup(
     state: &AppState,
     id: ServerId,
-    request_timeout: Duration,
+    request_timeout: Option<Duration>,
     cancel: &CancellationToken,
 ) -> AppResult<StartOutcome> {
     // Cancellation points bracket every await: before the child exists a
@@ -250,6 +312,12 @@ async fn run_startup(
         _ = cancel.cancelled() => return Ok(StartOutcome::Cancelled),
         record = state.with_db(move |conn| db::get_server(conn, id)) => record?,
     };
+    let request_timeout = request_timeout.unwrap_or_else(|| {
+        record
+            .request_timeout_s
+            .map(Duration::from_secs)
+            .unwrap_or(DEFAULT_REQUEST_TIMEOUT)
+    });
 
     // Secret resolution hits the OS credential store (blocking) and happens
     // just-in-time — the resolved values exist only in the child's spawn
@@ -358,28 +426,104 @@ async fn run_startup(
         return Ok(StartOutcome::Cancelled);
     }
 
-    // Exit waiter: owns the Child, reaps it, and settles the final status.
+    // Exit waiter: owns the Child, reaps it, and settles the final status —
+    // or, for a crash with auto-restart on, schedules the respawn.
     let waiter_state = state.clone();
+    let started_at = std::time::Instant::now();
     tokio::spawn(async move {
         let result = child.wait().await;
         let _ = exit_tx.send(true);
         if stopping.load(Ordering::SeqCst) {
             waiter_state.set_status(id, ServerStatus::Stopped);
-        } else {
-            let detail = match result {
-                Ok(status) => status.to_string(),
-                Err(error) => error.to_string(),
-            };
-            waiter_state.set_status(
-                id,
-                ServerStatus::Errored {
-                    message: format!("server exited unexpectedly ({detail})"),
-                },
-            );
+            return;
         }
+        let detail = match result {
+            Ok(status) => status.to_string(),
+            Err(error) => error.to_string(),
+        };
+        let crashed = format!("server exited unexpectedly ({detail})");
+        // Re-read the config so unticking the box after a start still
+        // applies; a config read failure simply means no restart.
+        let wants_restart = waiter_state
+            .with_db(move |conn| db::get_server(conn, id))
+            .await
+            .map(|record| record.restart_on_crash)
+            .unwrap_or(false);
+        if !wants_restart {
+            waiter_state.set_status(id, ServerStatus::Errored { message: crashed });
+            return;
+        }
+        schedule_restart(waiter_state, id, crashed, started_at.elapsed(), stopping);
     });
 
     Ok(StartOutcome::Running)
+}
+
+/// `start` behind an explicit signature: the restart task lives inside
+/// `run_startup`'s future and calls `start`, which contains `run_startup` —
+/// a cycle in async fn types unless one link is type-erased here.
+fn start_erased(
+    state: AppState,
+    id: ServerId,
+) -> std::pin::Pin<Box<dyn Future<Output = AppResult<()>> + Send>> {
+    Box::pin(async move { start_inner(&state, id, None).await })
+}
+
+/// Mark the crash and arm the next attempt of the streak, or give up once
+/// the streak is exhausted. The scheduled task selects on the streak's
+/// token so a deliberate stop in the meantime wins.
+///
+/// Ordering against `stop`, which sets `stopping` *then* cancels restarts:
+/// arm first, check `stopping` second. If the stop flagged before our
+/// check, we see it and stand down; if it flagged after, its cancel ran
+/// after our arm and revoked the token. No interleaving lets a stopped
+/// server come back.
+fn schedule_restart(
+    state: AppState,
+    id: ServerId,
+    crashed: String,
+    uptime: Duration,
+    stopping: Arc<AtomicBool>,
+) {
+    let (attempt, token) = state.arm_restart(id, uptime >= RESTART_HEALTHY_UPTIME);
+    if stopping.load(Ordering::SeqCst) {
+        state.cancel_restarts(id);
+        state.set_status(id, ServerStatus::Stopped);
+        return;
+    }
+    if attempt > RESTART_MAX_ATTEMPTS {
+        state.restart_fired(id, &token);
+        state.set_status(
+            id,
+            ServerStatus::Errored {
+                message: format!(
+                    "{crashed}; gave up after {RESTART_MAX_ATTEMPTS} automatic restarts"
+                ),
+            },
+        );
+        return;
+    }
+    let delay = restart_delay(attempt);
+    state.set_status(
+        id,
+        ServerStatus::Errored {
+            message: format!(
+                "{crashed}; restarting in {} s (attempt {attempt} of {RESTART_MAX_ATTEMPTS})",
+                delay.as_secs()
+            ),
+        },
+    );
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = token.cancelled() => {}
+            _ = tokio::time::sleep(delay) => {
+                state.restart_fired(id, &token);
+                if let Err(error) = start_erased(state.clone(), id).await {
+                    tracing::warn!(target: "app::lifecycle", id, attempt, %error, "automatic restart failed");
+                }
+            }
+        }
+    });
 }
 
 /// Graceful stop per spec: signal the tree, wait the grace period, then hard
@@ -388,6 +532,9 @@ async fn run_startup(
 /// start task kills anything it spawned and writes the final status before
 /// its guard settles, so the re-inspection below sees the true end state.
 pub async fn stop(state: &AppState, id: ServerId) -> AppResult<()> {
+    // A deliberate stop ends any crash-restart streak first, so a restart
+    // timer can't fire into the stop and resurrect the server.
+    state.cancel_restarts(id);
     if let Some(start) = state.start_handle(id) {
         start.cancel.cancel();
         let mut settled = start.settled.clone();

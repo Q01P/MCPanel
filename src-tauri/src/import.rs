@@ -562,6 +562,8 @@ async fn apply(state: &AppState, server: &ParsedServer, name: String) -> AppResu
             cwd: candidate.cwd.clone(),
             // Importing must never start processes on the user's behalf.
             auto_start: false,
+            request_timeout_s: None,
+            restart_on_crash: false,
         },
     )
     .await?;

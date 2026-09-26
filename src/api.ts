@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   DiscoveredConfig,
+  ExportOutcome,
+  ExportRequest,
   GatewayInfo,
   ImportOutcome,
   NewServer,
@@ -20,6 +22,7 @@ export const deleteServerSecret = (id: number, key: string) =>
 export const removeServer = (id: number) => invoke<void>("remove_server", { id });
 export const startServer = (id: number) => invoke<void>("start_server", { id });
 export const stopServer = (id: number) => invoke<void>("stop_server", { id });
+export const restartServer = (id: number) => invoke<void>("restart_server", { id });
 export const gatewayInfo = () => invoke<GatewayInfo>("gateway_info");
 
 export const discoverImports = () => invoke<DiscoveredConfig[]>("discover_imports");
@@ -27,6 +30,11 @@ export const readImportConfig = (path: string) =>
   invoke<DiscoveredConfig>("read_import_config", { path });
 export const importServers = (path: string, names: string[]) =>
   invoke<ImportOutcome>("import_servers", { path, names });
+
+export const exportServers = (request: ExportRequest) =>
+  invoke<ExportOutcome>("export_servers", { request });
+export const writeExportFile = (path: string, text: string) =>
+  invoke<void>("write_export_file", { path, text });
 
 /** Backend errors serialize as `{code, message}` (AppError). */
 export function describeError(error: unknown): string {

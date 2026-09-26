@@ -176,6 +176,11 @@ body {
   transition: transform 0.15s, background 0.15s;
 }
 
+.switch-busy .slider {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .switch input:checked + .slider {
   background: color-mix(in srgb, var(--accent) 55%, var(--surface));
 }
@@ -183,11 +188,6 @@ body {
 .switch input:checked + .slider::before {
   transform: translateX(18px);
   background: var(--text);
-}
-
-.switch-busy .slider {
-  opacity: 0.6;
-  cursor: progress;
 }
 
 /* The input is visually hidden, so keyboard focus must show on the styled
@@ -198,6 +198,7 @@ body {
 }
 
 .remove-button,
+.restart-button,
 .edit-button {
   background: none;
   border: 1px solid var(--border);
@@ -213,7 +214,8 @@ body {
   border-color: var(--err);
 }
 
-.edit-button:hover {
+.edit-button:hover,
+.restart-button:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
@@ -252,12 +254,28 @@ input:focus-visible {
   outline-offset: 2px;
 }
 
+.server-meta {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  margin-top: 0.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .server-error {
   display: block;
   color: var(--err);
   font-size: 0.78rem;
   margin-top: 0.15rem;
   overflow-wrap: anywhere;
+}
+
+.add-options {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
 }
 
 .env-editor {
@@ -419,6 +437,28 @@ input:focus-visible {
   color: #f0a3a3;
 }
 
+/* MCP logging channel (`notifications/message`): tinted by level so a
+   warning or error stands out from a server's own chatter. */
+.log-mcp {
+  color: #9ec5ff;
+}
+
+.log-level-debug {
+  color: var(--text-dim);
+}
+
+.log-level-warning,
+.log-level-notice {
+  color: var(--warn);
+}
+
+.log-level-error,
+.log-level-critical,
+.log-level-alert,
+.log-level-emergency {
+  color: #f0a3a3;
+}
+
 .log-marker {
   color: var(--text-dim);
   font-style: italic;
@@ -534,7 +574,50 @@ input:focus-visible {
 .workbench-history h3 {
   font-size: 0.85rem;
   color: var(--text-dim);
-  margin: 0 0 0.4rem;
+  margin: 0;
+}
+
+.workbench-history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.history-clear {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+}
+
+.history-row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+
+.history-row .history-open {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-rerun {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  padding: 0 0.6rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.history-rerun:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.history-rerun:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .workbench-history ul {
@@ -546,7 +629,7 @@ input:focus-visible {
   gap: 0.25rem;
 }
 
-.workbench-history button {
+.workbench-history .history-open {
   display: flex;
   gap: 0.6rem;
   align-items: baseline;
@@ -561,7 +644,7 @@ input:focus-visible {
   text-align: left;
 }
 
-.workbench-history button:hover {
+.workbench-history .history-open:hover {
   border-color: var(--accent);
 }
 
@@ -596,8 +679,74 @@ input:focus-visible {
   cursor: pointer;
 }
 
-.import-button:hover {
+.import-button:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+.import-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.export-button {
+  margin-left: 0;
+}
+
+.export-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.export-options label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.export-servers {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+}
+
+.export-servers label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.export-text {
+  width: 100%;
+  min-height: 14rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  padding: 0.5rem 0.65rem;
+  resize: vertical;
+}
+
+.export-warning {
+  color: var(--warn);
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0;
+}
+
+.export-status {
+  color: var(--ok);
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0;
 }
 
 /* A button that reads as a link, for the empty state's inline call to
@@ -971,6 +1120,72 @@ input:focus-visible {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.82rem;
   font-weight: 600;
+}
+
+.item-tag {
+  margin-left: 0.4rem;
+  font-family: system-ui, sans-serif;
+  font-weight: normal;
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.item-uri {
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-uri {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.tools-cost {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-cost {
+  margin-left: 0.4rem;
+  color: var(--text-dim);
+  font-weight: normal;
+  font-size: 0.68rem;
+}
+
+.tool-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+}
+
+.tool-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: system-ui, sans-serif;
+  font-size: 0.65rem;
+  padding: 0 0.4rem;
+}
+
+.tool-badge-ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.tool-badge-warn {
+  border-color: var(--warn);
+  color: var(--warn);
 }
 
 .tool-description {

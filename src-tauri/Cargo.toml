@@ -1,6 +1,6 @@
 [package]
 name = "mcpanel"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCPanel — a control panel for local MCP servers"
 authors = ["Oussema Taleb <taleb@xseth.com>"]
 license = "MIT"
@@ -16,29 +16,29 @@ name = "mcpanel_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.3", features = [] }
+tauri-build = { version = "2.7.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.5", features = [] }
+tauri = { version = "2.12.0", features = [] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-thiserror = "2.0.19"
+thiserror = "2.0.21"
 
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "net"] }
 tokio-util = { version = "0.7.19", features = ["codec"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 
 axum = "0.8.9"
-hyper = "1.11.0"
+hyper = "1.11.1"
 tower = { version = "0.5.3", features = ["timeout", "util"] }
-# Verified against crates.io 2026-08-08. The webview and the gateway are
+# Verified against crates.io 2026-09-26. The webview and the gateway are
 # different origins, so every browser-side call is subject to CORS.
-tower-http = { version = "0.7.0", features = ["cors"] }
+tower-http = { version = "0.7.1", features = ["cors"] }
 
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 dashmap = "6.2.1"
 bytes = "1.12.1"
-keyring = "4.1.5"
+keyring = "4.2.0"
 ring = "0.17.14"
 
 tracing = "0.1.44"
@@ -59,7 +59,7 @@ libc = "0.2.189"
 anyhow = "1.0"
 # Same pin as [dependencies]; integration tests plant legacy-format keyring
 # entries directly to exercise the name→id migration.
-keyring = "4.1.5"
+keyring = "4.2.0"
 
 [profile.release]
 opt-level = "s"

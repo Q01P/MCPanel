@@ -4,7 +4,7 @@ Thanks for pitching in. This is a small, deliberately scoped project; the bar fo
 
 ## Dev setup
 
-Prerequisites: Rust stable ≥ 1.95, Node 20+, and on Linux:
+Prerequisites: Rust stable ≥ 1.95, Node 22+, and on Linux:
 
 ```bash
 sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev \

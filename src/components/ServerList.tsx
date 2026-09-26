@@ -1,3 +1,4 @@
+import { describeHandshake } from "../handshake";
 import { useLogs } from "../logs";
 import { usePanel } from "../store";
 import type { ServerOverview, ServerStatus } from "../types";
@@ -19,6 +20,7 @@ function StatusBadge({ status }: { status: ServerStatus }) {
 
 function ServerRow({ server }: { server: ServerOverview }) {
   const toggle = usePanel((s) => s.toggle);
+  const restart = usePanel((s) => s.restart);
   const remove = usePanel((s) => s.remove);
   const setEditing = usePanel((s) => s.setEditing);
   const selectLogs = useLogs((s) => s.select);
@@ -35,6 +37,11 @@ function ServerRow({ server }: { server: ServerOverview }) {
         <span className="server-command">
           {server.command} {server.args.join(" ")}
         </span>
+        {server.status.state === "running" && server.handshake && (
+          <span className="server-meta" title="from the initialize handshake">
+            {describeHandshake(server.handshake)}
+          </span>
+        )}
         {server.status.state === "errored" && (
           // The reason must be readable, not hover-only via `title` —
           // keyboard and screen-reader users never see a tooltip.
@@ -55,6 +62,16 @@ function ServerRow({ server }: { server: ServerOverview }) {
         />
         <span className="slider" />
       </label>
+      {(running || server.status.state === "errored") && (
+        <button
+          type="button"
+          className="restart-button"
+          title="Stop and start again"
+          onClick={() => void restart(server.id)}
+        >
+          restart
+        </button>
+      )}
       <button
         type="button"
         className={`logs-button${logsOpen ? " logs-button-active" : ""}`}

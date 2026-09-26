@@ -10,6 +10,7 @@ vi.mock("./api", async (importOriginal) => {
     updateServer: vi.fn(async () => {}),
     setServerSecret: vi.fn(async () => {}),
     removeServer: vi.fn(async () => {}),
+    restartServer: vi.fn(async () => {}),
   };
 });
 
@@ -25,7 +26,10 @@ const overview = (id: number): ServerOverview => ({
   env: {},
   cwd: null,
   auto_start: false,
+  request_timeout_s: null,
+  restart_on_crash: false,
   status: { state: "stopped" },
+  handshake: null,
 });
 
 beforeEach(() => {
@@ -44,6 +48,27 @@ afterEach(() => {
 });
 
 describe("applyEvent", () => {
+  it("attaches a handshake to its server and drops it when the server leaves running", () => {
+    usePanel.setState({ servers: [overview(1), overview(2)] });
+    const handshake = {
+      protocol_version: "2025-06-18",
+      capabilities: { tools: {} },
+      server_info: { name: "mock" },
+    };
+
+    usePanel.getState().applyEvent({ type: "status_changed", server_id: 1, status: { state: "running" } });
+    usePanel.getState().applyEvent({ type: "handshake", server_id: 1, handshake });
+    expect(usePanel.getState().servers[0]?.handshake).toEqual(handshake);
+    expect(usePanel.getState().servers[1]?.handshake).toBeNull();
+
+    usePanel.getState().applyEvent({
+      type: "status_changed",
+      server_id: 1,
+      status: { state: "errored", message: "crashed" },
+    });
+    expect(usePanel.getState().servers[0]?.handshake).toBeNull();
+  });
+
   it("patches only the matching server's status", () => {
     usePanel.setState({ servers: [overview(1), overview(2)] });
 
@@ -70,6 +95,18 @@ describe("applyEvent", () => {
   });
 });
 
+describe("restart", () => {
+  it("calls the backend and reports success; a failure resyncs the list", async () => {
+    expect(await usePanel.getState().restart(3)).toBe(true);
+    expect(api.restartServer).toHaveBeenCalledWith(3);
+
+    vi.mocked(api.restartServer).mockRejectedValueOnce({ code: "spawn", message: "nope" });
+    expect(await usePanel.getState().restart(3)).toBe(false);
+    expect(usePanel.getState().error).toBe("nope");
+    expect(api.listServers).toHaveBeenCalled();
+  });
+});
+
 describe("mutations report success", () => {
   it("add resolves the created record so callers can chain secrets onto it", async () => {
     const record = await usePanel.getState().add({
@@ -79,6 +116,8 @@ describe("mutations report success", () => {
       env: {},
       cwd: null,
       auto_start: false,
+      request_timeout_s: null,
+      restart_on_crash: false,
     });
     expect(record?.id).toBe(42);
   });
@@ -96,6 +135,8 @@ describe("mutations report success", () => {
       env: {},
       cwd: null,
       auto_start: false,
+      request_timeout_s: null,
+      restart_on_crash: false,
     });
 
     expect(record).toBeNull();

@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod export;
 pub mod import;
 pub mod mcp;
 pub mod secrets;
@@ -53,9 +54,13 @@ pub fn run() {
             // then the auto-start sweep (which may resolve migrated secrets)
             // follows in the same task; failures surface per-server as
             // Errored, never as a launch failure.
+            // The login-shell PATH probe (up to 3 s) rides the same blocking
+            // task, so auto-started servers see it and no runtime thread
+            // ever waits on a shell.
             tauri::async_runtime::spawn(async move {
                 let _ = state::blocking(move || {
                     secrets::migrate_name_keyed_secrets(&records);
+                    mcp::launch::warm_login_shell_path();
                     Ok(())
                 })
                 .await;
@@ -71,12 +76,15 @@ pub fn run() {
             commands::remove_server,
             commands::start_server,
             commands::stop_server,
+            commands::restart_server,
             commands::set_server_secret,
             commands::delete_server_secret,
             commands::gateway_info,
             commands::discover_imports,
             commands::read_import_config,
             commands::import_servers,
+            commands::export_servers,
+            commands::write_export_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MCPanel");
