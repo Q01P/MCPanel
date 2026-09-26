@@ -16,8 +16,17 @@ export interface ServerRecord {
   auto_start: boolean;
 }
 
+/** What the `initialize` handshake yielded (backend: protocol.rs). */
+export interface ServerHandshake {
+  protocol_version: string;
+  capabilities: Record<string, unknown>;
+  server_info: Record<string, unknown>;
+}
+
 export interface ServerOverview extends ServerRecord {
   status: ServerStatus;
+  /** Present exactly while `status` is running. */
+  handshake: ServerHandshake | null;
 }
 
 export type NewServer = Omit<ServerRecord, "id">;
@@ -31,6 +40,8 @@ export type AppEvent =
   | { type: "notification"; server_id: number; payload: unknown }
   // Notifications lost to backpressure on the backend's advisory channel.
   | { type: "notification_gap"; server_id: number; dropped: number }
+  // Published right after a `running` status change.
+  | { type: "handshake"; server_id: number; handshake: ServerHandshake }
   // Synthetic gateway marker: this SSE subscriber fell behind the broadcast.
   | { type: "lagged"; missed: number };
 

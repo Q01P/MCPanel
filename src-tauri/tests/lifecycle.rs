@@ -26,12 +26,28 @@ async fn full_lifecycle_walks_the_state_machine() {
     assert_eq!(runtime.handshake.server_info["name"], "mock-mcp-server");
     assert!(alive(runtime.pid as i32), "server process running");
 
-    // The UI saw the whole state machine, in order.
+    // The UI saw the whole state machine, in order — and the handshake
+    // lands right after Running, so the row can show identity without a
+    // list round trip.
     let mut seen = Vec::new();
+    let mut handshake_after_running = false;
     while let Ok(event) = events.try_recv() {
-        if let AppEvent::StatusChanged { server_id, status } = event {
-            assert_eq!(server_id, id);
-            seen.push(status);
+        match event {
+            AppEvent::StatusChanged { server_id, status } => {
+                assert_eq!(server_id, id);
+                seen.push(status);
+            }
+            AppEvent::Handshake {
+                server_id,
+                handshake,
+            } => {
+                assert_eq!(server_id, id);
+                assert_eq!(seen.last(), Some(&ServerStatus::Running));
+                assert_eq!(handshake.server_info["name"], "mock-mcp-server");
+                assert_eq!(handshake.protocol_version, "2025-06-18");
+                handshake_after_running = true;
+            }
+            _ => {}
         }
     }
     assert_eq!(
@@ -41,6 +57,15 @@ async fn full_lifecycle_walks_the_state_machine() {
             ServerStatus::Initializing,
             ServerStatus::Running,
         ]
+    );
+    assert!(handshake_after_running, "Handshake event follows Running");
+
+    // And the overview carries it while running.
+    let listed = lifecycle::list(&state).await.expect("list");
+    let overview = listed.iter().find(|o| o.record.id == id).expect("listed");
+    assert_eq!(
+        overview.handshake.as_ref().map(|h| h.protocol_version.as_str()),
+        Some("2025-06-18")
     );
 
     // Idempotent start while running is a no-op.

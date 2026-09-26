@@ -61,6 +61,13 @@ pub enum AppEvent {
     /// Notifications lost to backpressure on the advisory channel — the
     /// notification analogue of [`AppEvent::LogGap`].
     NotificationGap { server_id: ServerId, dropped: u64 },
+    /// What the `initialize` handshake yielded, published right after the
+    /// `Running` status so the UI can show server identity and capabilities
+    /// without a list round trip.
+    Handshake {
+        server_id: ServerId,
+        handshake: ServerHandshake,
+    },
 }
 
 // serde's `rc` feature is deliberately off; log lines stay `Arc<str>` across
@@ -280,6 +287,7 @@ impl AppState {
     /// cancels first) can never be resurrected by a late install. On failure
     /// the caller owns the child and must kill it.
     pub fn try_install_runtime(&self, id: ServerId, runtime: RunningServer) -> bool {
+        let handshake = runtime.handshake.clone();
         let installed = match self.registry.entry(id) {
             dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
                 let entry = occupied.get_mut();
@@ -300,6 +308,10 @@ impl AppState {
                 server_id: id,
                 status: ServerStatus::Running,
             });
+            self.publish(AppEvent::Handshake {
+                server_id: id,
+                handshake,
+            });
         }
         installed
     }
@@ -308,6 +320,13 @@ impl AppState {
         self.registry
             .get(&id)
             .and_then(|entry| entry.runtime.clone())
+    }
+
+    /// The handshake of a running server; `None` in every other state.
+    pub fn handshake(&self, id: ServerId) -> Option<ServerHandshake> {
+        self.registry
+            .get(&id)
+            .and_then(|entry| entry.runtime.as_ref().map(|r| r.handshake.clone()))
     }
 
     /// Run a closure against the shared SQLite connection on the blocking

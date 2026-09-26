@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { envelope, rpc } from "./rpc";
+import type { AppEvent } from "./types";
 import { DEFAULT_TIMEOUT_S, useWorkbench } from "./workbench";
 
 // The tools browser: `tools/list` rendered as a list, a tool's `inputSchema`
@@ -234,6 +235,32 @@ export function callBody(name: string, args: Record<string, unknown>): string {
  * the browser forever. */
 const MAX_PAGES = 50;
 
+/** Every page of `tools/list`, or the message of the first failure. */
+async function fetchTools(
+  serverId: number,
+): Promise<{ ok: true; tools: ToolDef[] } | { ok: false; message: string }> {
+  const tools: ToolDef[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const outcome = await rpc(
+      serverId,
+      "tools/list",
+      cursor === undefined ? {} : { cursor },
+      DEFAULT_TIMEOUT_S,
+    );
+    if (outcome.kind !== "result") return { ok: false, message: outcome.message };
+    const body = outcome.result as { tools?: unknown; nextCursor?: unknown } | undefined;
+    if (Array.isArray(body?.tools)) {
+      for (const tool of body.tools as ToolDef[]) {
+        if (tool && typeof tool.name === "string") tools.push(tool);
+      }
+    }
+    if (typeof body?.nextCursor !== "string" || body.nextCursor === "") break;
+    cursor = body.nextCursor;
+  }
+  return { ok: true, tools };
+}
+
 interface ToolsState {
   serverId: number | null;
   tools: ToolDef[];
@@ -247,6 +274,11 @@ interface ToolsState {
   callError: string | null;
   fieldErrors: Record<string, string>;
   load: (serverId: number | null) => Promise<void>;
+  /** Re-list the current server's tools in place (no loading flash). */
+  refresh: () => Promise<void>;
+  /** `notifications/tools/list_changed` from the shown server re-lists;
+   * the selection is kept when the tool survives. */
+  applyEvent: (event: AppEvent) => void;
   select: (name: string | null) => void;
   setValue: (name: string, value: string | boolean) => void;
   call: (serverName: string, timeoutS: number) => Promise<void>;
@@ -274,31 +306,37 @@ export const useTools = create<ToolsState>((set, get) => ({
     set({ serverId, tools: [], selected: null, values: {}, loadError: null, ...EMPTY_CALL });
     if (serverId == null) return;
     set({ loading: true });
-    const tools: ToolDef[] = [];
-    let cursor: string | undefined;
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const outcome = await rpc(
-        serverId,
-        "tools/list",
-        cursor === undefined ? {} : { cursor },
-        DEFAULT_TIMEOUT_S,
-      );
-      // A stale reply from a server we've since left must not land.
-      if (get().serverId !== serverId) return;
-      if (outcome.kind !== "result") {
-        set({ loading: false, loadError: outcome.message });
-        return;
-      }
-      const body = outcome.result as { tools?: unknown; nextCursor?: unknown } | undefined;
-      if (Array.isArray(body?.tools)) {
-        for (const tool of body.tools as ToolDef[]) {
-          if (tool && typeof tool.name === "string") tools.push(tool);
-        }
-      }
-      if (typeof body?.nextCursor !== "string" || body.nextCursor === "") break;
-      cursor = body.nextCursor;
+    const fetched = await fetchTools(serverId);
+    // A stale reply from a server we've since left must not land.
+    if (get().serverId !== serverId) return;
+    if (!fetched.ok) {
+      set({ loading: false, loadError: fetched.message });
+      return;
     }
-    set({ tools, loading: false });
+    set({ tools: fetched.tools, loading: false });
+  },
+
+  refresh: async () => {
+    const { serverId, selected } = get();
+    if (serverId == null) return;
+    const fetched = await fetchTools(serverId);
+    if (get().serverId !== serverId) return;
+    if (!fetched.ok) {
+      set({ loadError: fetched.message });
+      return;
+    }
+    const survives = selected != null && fetched.tools.some((t) => t.name === selected);
+    set({ tools: fetched.tools, loadError: null });
+    // The schema may have changed under the form; a fresh selection
+    // rebuilds it from the new definition rather than trusting old values.
+    if (selected != null && get().selected === selected) get().select(survives ? selected : null);
+  },
+
+  applyEvent: (event) => {
+    if (event.type !== "notification" || event.server_id !== get().serverId) return;
+    const method = (event.payload as { method?: unknown } | null)?.method;
+    if (method !== "notifications/tools/list_changed") return;
+    void get().refresh();
   },
 
   select: (name) => {

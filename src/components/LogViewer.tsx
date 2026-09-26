@@ -12,11 +12,11 @@ function Row({ entry }: { entry: LogEntry }) {
   if (entry.kind === "gap") {
     return <div className="log-row log-marker">{entry.text}</div>;
   }
+  const classes = ["log-row", "log-line"];
+  if (entry.stream === "stderr") classes.push("log-stderr");
+  if (entry.stream === "mcp") classes.push("log-mcp", `log-level-${entry.level ?? "info"}`);
   return (
-    <div
-      className={`log-row log-line${entry.stream === "stderr" ? " log-stderr" : ""}`}
-      title={entry.text}
-    >
+    <div className={classes.join(" ")} title={entry.text}>
       {entry.text}
     </div>
   );

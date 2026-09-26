@@ -252,6 +252,16 @@ input:focus-visible {
   outline-offset: 2px;
 }
 
+.server-meta {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  margin-top: 0.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .server-error {
   display: block;
   color: var(--err);
@@ -416,6 +426,28 @@ input:focus-visible {
 }
 
 .log-stderr {
+  color: #f0a3a3;
+}
+
+/* MCP logging channel (`notifications/message`): tinted by level so a
+   warning or error stands out from a server's own chatter. */
+.log-mcp {
+  color: #9ec5ff;
+}
+
+.log-level-debug {
+  color: var(--text-dim);
+}
+
+.log-level-warning,
+.log-level-notice {
+  color: var(--warn);
+}
+
+.log-level-error,
+.log-level-critical,
+.log-level-alert,
+.log-level-emergency {
   color: #f0a3a3;
 }
 

@@ -195,6 +195,43 @@ describe("useTools store", () => {
     expect(useTools.getState().loading).toBe(false);
   });
 
+  it("re-lists on tools/list_changed from the shown server, keeping a surviving selection", async () => {
+    const schema = { type: "object", properties: { message: { type: "string" } } };
+    rpcMock.mockResolvedValueOnce({
+      kind: "result",
+      result: { tools: [{ name: "echo", inputSchema: schema }, { name: "doomed" }] },
+    });
+    await useTools.getState().load(7);
+    useTools.getState().select("echo");
+    useTools.getState().setValue("message", "typed");
+
+    // Another server's change is not ours.
+    useTools.getState().applyEvent({
+      type: "notification",
+      server_id: 8,
+      payload: { method: "notifications/tools/list_changed" },
+    });
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+
+    rpcMock.mockResolvedValueOnce({
+      kind: "result",
+      result: { tools: [{ name: "echo", inputSchema: schema }, { name: "new" }] },
+    });
+    useTools.getState().applyEvent({
+      type: "notification",
+      server_id: 7,
+      payload: { method: "notifications/tools/list_changed" },
+    });
+    await vi.waitFor(() => expect(useTools.getState().tools.map((t) => t.name)).toEqual(["echo", "new"]));
+    expect(useTools.getState().selected).toBe("echo");
+    expect(useTools.getState().loading).toBe(false);
+
+    // A selection whose tool vanished is cleared rather than left dangling.
+    rpcMock.mockResolvedValueOnce({ kind: "result", result: { tools: [{ name: "other" }] } });
+    await useTools.getState().refresh();
+    expect(useTools.getState().selected).toBeNull();
+  });
+
   it("surfaces a list failure and leaves no stale tools", async () => {
     rpcMock.mockResolvedValueOnce({ kind: "transport", message: "HTTP 404: server not found" });
     await useTools.getState().load(7);

@@ -26,6 +26,7 @@ const overview = (id: number): ServerOverview => ({
   cwd: null,
   auto_start: false,
   status: { state: "stopped" },
+  handshake: null,
 });
 
 beforeEach(() => {
@@ -44,6 +45,27 @@ afterEach(() => {
 });
 
 describe("applyEvent", () => {
+  it("attaches a handshake to its server and drops it when the server leaves running", () => {
+    usePanel.setState({ servers: [overview(1), overview(2)] });
+    const handshake = {
+      protocol_version: "2025-06-18",
+      capabilities: { tools: {} },
+      server_info: { name: "mock" },
+    };
+
+    usePanel.getState().applyEvent({ type: "status_changed", server_id: 1, status: { state: "running" } });
+    usePanel.getState().applyEvent({ type: "handshake", server_id: 1, handshake });
+    expect(usePanel.getState().servers[0]?.handshake).toEqual(handshake);
+    expect(usePanel.getState().servers[1]?.handshake).toBeNull();
+
+    usePanel.getState().applyEvent({
+      type: "status_changed",
+      server_id: 1,
+      status: { state: "errored", message: "crashed" },
+    });
+    expect(usePanel.getState().servers[0]?.handshake).toBeNull();
+  });
+
   it("patches only the matching server's status", () => {
     usePanel.setState({ servers: [overview(1), overview(2)] });
 

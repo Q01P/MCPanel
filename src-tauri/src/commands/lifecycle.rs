@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::db::{self, EnvValue, NewServer, ServerRecord};
 use crate::error::{AppError, AppResult};
 use crate::mcp::process::{ManagedChild, ProcessConfig, SHUTDOWN_GRACE, spawn};
-use crate::mcp::protocol::{DEFAULT_REQUEST_TIMEOUT, connect};
+use crate::mcp::protocol::{DEFAULT_REQUEST_TIMEOUT, ServerHandshake, connect};
 use crate::mcp::stream::{StreamEvent, attach};
 use crate::state::{AppEvent, AppState, LogStream, RunningServer, ServerId, ServerStatus};
 
@@ -41,6 +41,7 @@ pub async fn list(state: &AppState) -> AppResult<Vec<ServerOverview>> {
         .into_iter()
         .map(|record| ServerOverview {
             status: state.status(record.id),
+            handshake: state.handshake(record.id),
             record,
         })
         .collect())
@@ -52,6 +53,8 @@ pub struct ServerOverview {
     #[serde(flatten)]
     pub record: ServerRecord,
     pub status: ServerStatus,
+    /// Present exactly while `status` is `Running`.
+    pub handshake: Option<ServerHandshake>,
 }
 
 /// Reject configs that can only fail later and worse: a blank name or

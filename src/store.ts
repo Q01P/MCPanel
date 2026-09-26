@@ -149,10 +149,25 @@ export const usePanel = create<PanelState>((set, get) => ({
       get().resync();
       return;
     }
+    if (event.type === "handshake") {
+      set({
+        servers: get().servers.map((server) =>
+          server.id === event.server_id ? { ...server, handshake: event.handshake } : server,
+        ),
+      });
+      return;
+    }
     if (event.type !== "status_changed") return;
     set({
       servers: get().servers.map((server) =>
-        server.id === event.server_id ? { ...server, status: event.status } : server,
+        server.id === event.server_id
+          ? {
+              ...server,
+              status: event.status,
+              // The handshake belongs to one process; it dies with Running.
+              handshake: event.status.state === "running" ? server.handshake : null,
+            }
+          : server,
       ),
     });
   },
