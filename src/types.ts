@@ -101,3 +101,20 @@ export interface ImportOutcome {
   imported: ImportedServer[];
   failed: FailedImport[];
 }
+
+// Export to other clients' config shape (backend: export.rs).
+
+export type ExportFlavor = "mcp_servers" | "vs_code";
+
+export interface ExportRequest {
+  ids: number[];
+  flavor: ExportFlavor;
+  /** Only ever true after the user confirmed in the dialog. */
+  include_secrets: boolean;
+}
+
+export interface ExportOutcome {
+  text: string;
+  /** "server/KEY" for each secret written as a `${KEY}` placeholder. */
+  placeholders: string[];
+}

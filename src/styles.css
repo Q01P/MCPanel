@@ -679,8 +679,74 @@ input:focus-visible {
   cursor: pointer;
 }
 
-.import-button:hover {
+.import-button:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+.import-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.export-button {
+  margin-left: 0;
+}
+
+.export-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.export-options label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.export-servers {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+}
+
+.export-servers label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.export-text {
+  width: 100%;
+  min-height: 14rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  padding: 0.5rem 0.65rem;
+  resize: vertical;
+}
+
+.export-warning {
+  color: var(--warn);
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0;
+}
+
+.export-status {
+  color: var(--ok);
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0;
 }
 
 /* A button that reads as a link, for the empty state's inline call to

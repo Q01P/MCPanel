@@ -20,6 +20,8 @@ interface PanelState {
   editing: ServerOverview | null;
   /** The import dialog is open. */
   importOpen: boolean;
+  /** The export dialog is open. */
+  exportOpen: boolean;
   load: () => Promise<void>;
   resync: () => void;
   /** Mutations resolve truthy on success so callers can keep user input
@@ -33,6 +35,7 @@ interface PanelState {
   restart: (id: number) => Promise<boolean>;
   setEditing: (server: ServerOverview | null) => void;
   setImportOpen: (open: boolean) => void;
+  setExportOpen: (open: boolean) => void;
   /** Import reads return null on failure, having set the error banner —
    * same contract as the mutations above. */
   discoverImports: () => Promise<DiscoveredConfig[] | null>;
@@ -53,6 +56,7 @@ export const usePanel = create<PanelState>((set, get) => ({
   error: null,
   editing: null,
   importOpen: false,
+  exportOpen: false,
 
   load: async () => {
     try {
@@ -187,6 +191,8 @@ export const usePanel = create<PanelState>((set, get) => ({
   setEditing: (server) => set({ editing: server }),
 
   setImportOpen: (open) => set({ importOpen: open }),
+
+  setExportOpen: (open) => set({ exportOpen: open }),
 
   discoverImports: async () => {
     try {

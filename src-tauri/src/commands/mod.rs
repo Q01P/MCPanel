@@ -140,3 +140,30 @@ pub async fn import_servers(
     info!(target: "app::commands", path = %path, count = names.len(), "import_servers");
     crate::import::import(&state, path, names).await
 }
+
+// Export to other MCP clients' config shape. Secret values stay in the
+// keyring unless the request says otherwise (the UI asks first); the
+// resolved text is returned over IPC and never logged.
+
+#[tauri::command]
+#[tracing::instrument(target = "app::commands", skip(state, request))]
+pub async fn export_servers(
+    state: State<'_, AppState>,
+    request: crate::export::ExportRequest,
+) -> AppResult<crate::export::ExportOutcome> {
+    info!(
+        target: "app::commands",
+        count = request.ids.len(),
+        include_secrets = request.include_secrets,
+        "export_servers"
+    );
+    crate::export::export(&state, request).await
+}
+
+/// Save export text to a new file — never over an existing one.
+#[tauri::command]
+#[tracing::instrument(target = "app::commands", skip(text))]
+pub async fn write_export_file(path: String, text: String) -> AppResult<()> {
+    info!(target: "app::commands", path = %path, "write_export_file");
+    crate::export::write_new_file(path, text).await
+}

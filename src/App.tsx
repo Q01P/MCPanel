@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { ExportDialog } from "./components/ExportDialog";
 import { ImportDialog } from "./components/ImportDialog";
 import { LogViewer } from "./components/LogViewer";
 import { ServerForm } from "./components/ServerForm";
@@ -20,6 +21,8 @@ export default function App() {
   const applyPromptsEvent = usePrompts((s) => s.applyEvent);
   const error = usePanel((s) => s.error);
   const setImportOpen = usePanel((s) => s.setImportOpen);
+  const setExportOpen = usePanel((s) => s.setExportOpen);
+  const haveServers = usePanel((s) => s.servers.length > 0);
   const clearError = usePanel((s) => s.clearError);
 
   useEffect(() => {
@@ -46,6 +49,15 @@ export default function App() {
         <button type="button" className="import-button" onClick={() => setImportOpen(true)}>
           Import…
         </button>
+        <button
+          type="button"
+          className="import-button export-button"
+          onClick={() => setExportOpen(true)}
+          disabled={!haveServers}
+          title={haveServers ? "write these servers as a client config" : "nothing to export yet"}
+        >
+          Export…
+        </button>
       </header>
 
       {error && (
@@ -62,6 +74,7 @@ export default function App() {
       <Workbench />
       <ServerForm />
       <ImportDialog />
+      <ExportDialog />
     </main>
   );
 }
