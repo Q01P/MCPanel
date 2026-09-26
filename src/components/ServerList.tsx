@@ -20,6 +20,7 @@ function StatusBadge({ status }: { status: ServerStatus }) {
 
 function ServerRow({ server }: { server: ServerOverview }) {
   const toggle = usePanel((s) => s.toggle);
+  const restart = usePanel((s) => s.restart);
   const remove = usePanel((s) => s.remove);
   const setEditing = usePanel((s) => s.setEditing);
   const selectLogs = useLogs((s) => s.select);
@@ -61,6 +62,16 @@ function ServerRow({ server }: { server: ServerOverview }) {
         />
         <span className="slider" />
       </label>
+      {(running || server.status.state === "errored") && (
+        <button
+          type="button"
+          className="restart-button"
+          title="Stop and start again"
+          onClick={() => void restart(server.id)}
+        >
+          restart
+        </button>
+      )}
       <button
         type="button"
         className={`logs-button${logsOpen ? " logs-button-active" : ""}`}

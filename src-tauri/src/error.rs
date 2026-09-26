@@ -22,6 +22,12 @@ pub enum AppError {
     #[error("internal error: {0}")]
     Internal(String),
 
+    /// The server could not be launched at all — the command isn't there
+    /// or isn't executable. Distinct from `Io` so the message can say what
+    /// was searched instead of echoing an errno.
+    #[error("cannot start server: {0}")]
+    Spawn(String),
+
     #[error("MCP handshake failed: {0}")]
     Handshake(String),
 
@@ -59,6 +65,7 @@ impl AppError {
             Self::InvalidInput(_) => "invalid_input",
             Self::Conflict(_) => "conflict",
             Self::Internal(_) => "internal",
+            Self::Spawn(_) => "spawn",
             Self::Handshake(_) => "handshake",
             Self::Timeout(_) => "timeout",
             Self::Unauthorized => "unauthorized",
@@ -86,7 +93,7 @@ impl AppError {
             Self::Handshake(_) | Self::Rpc { .. } | Self::ConnectionClosed | Self::Json(_) => {
                 StatusCode::BAD_GATEWAY
             }
-            Self::Io(_) | Self::Db(_) | Self::Keyring(_) | Self::Internal(_) => {
+            Self::Io(_) | Self::Db(_) | Self::Keyring(_) | Self::Internal(_) | Self::Spawn(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         }

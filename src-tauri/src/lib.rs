@@ -71,6 +71,7 @@ pub fn run() {
             commands::remove_server,
             commands::start_server,
             commands::stop_server,
+            commands::restart_server,
             commands::set_server_secret,
             commands::delete_server_secret,
             commands::gateway_info,

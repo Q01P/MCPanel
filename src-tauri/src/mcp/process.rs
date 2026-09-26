@@ -24,7 +24,7 @@ use std::time::Duration;
 use tokio::process::{Child, Command};
 use tracing::{debug, warn};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 /// Graceful-stop window between SIGTERM / CTRL_BREAK and the hard kill.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -123,10 +123,19 @@ impl ManagedChild {
 /// Spawn an MCP server under supervision. Must be called from within a tokio
 /// runtime, on a long-lived runtime thread (see module docs re PDEATHSIG).
 pub fn spawn(config: &ProcessConfig) -> AppResult<ManagedChild> {
-    let mut command = Command::new(&config.command);
+    // Resolve against the merged (login shell + process) PATH before
+    // spawning, so a miss is a named "command not found" rather than a bare
+    // ENOENT — and hand that PATH down so grandchildren (`npx` → `node`)
+    // resolve the same way.
+    let path = crate::mcp::launch::effective_path(config.env.get("PATH").map(String::as_str));
+    let program =
+        crate::mcp::launch::resolve_command(&config.command, &path, config.cwd.as_deref())
+            .map_err(AppError::Spawn)?;
+    let mut command = Command::new(&program);
     command
         .args(&config.args)
         .envs(&config.env)
+        .env("PATH", &path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

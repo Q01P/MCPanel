@@ -199,6 +199,69 @@ async fn add_rejects_invalid_and_conflicting_configs() {
     assert!(matches!(duplicate, Err(AppError::Conflict(_))));
 }
 
+/// The single most-reported MCP setup failure is a command that isn't on
+/// the PATH a GUI app inherits. It must fail *before* spawn with a message
+/// that names the command, never a bare "os error 2".
+#[tokio::test]
+async fn missing_command_is_reported_by_name_before_spawn() {
+    let state = test_state();
+    let id = lifecycle::add(
+        &state,
+        NewServer {
+            name: "ghost".into(),
+            command: "mcpanel-no-such-command-zz".into(),
+            args: vec![],
+            env: BTreeMap::new(),
+            cwd: None,
+            auto_start: false,
+        },
+    )
+    .await
+    .expect("add")
+    .id;
+
+    let err = lifecycle::start(&state, id)
+        .await
+        .expect_err("cannot start");
+    assert_eq!(err.code(), "spawn");
+    let message = err.to_string();
+    assert!(
+        message.contains("command not found: mcpanel-no-such-command-zz"),
+        "{message}"
+    );
+    assert!(!message.contains("os error"), "{message}");
+    if let ServerStatus::Errored { message } = state.status(id) {
+        assert!(message.contains("command not found"), "{message}");
+    } else {
+        panic!("expected Errored");
+    }
+}
+
+/// Restart is stop-then-start as one operation: a fresh process, Running
+/// again, and the old one gone.
+#[tokio::test]
+async fn restart_replaces_the_process() {
+    let state = test_state();
+    let id = add_fixture(&state, "reloaded", &[]).await;
+    lifecycle::start(&state, id).await.expect("start");
+    let old_pid = state.runtime(id).expect("runtime").pid as i32;
+
+    lifecycle::restart(&state, id).await.expect("restart");
+    assert_eq!(state.status(id), ServerStatus::Running);
+    let new_pid = state.runtime(id).expect("runtime").pid as i32;
+    assert_ne!(old_pid, new_pid);
+    wait_for("old process death", || !alive(old_pid)).await;
+    assert!(alive(new_pid));
+
+    // Restarting a stopped server simply starts it.
+    lifecycle::stop(&state, id).await.expect("stop");
+    lifecycle::restart(&state, id)
+        .await
+        .expect("restart from stopped");
+    assert_eq!(state.status(id), ServerStatus::Running);
+    lifecycle::stop(&state, id).await.expect("stop");
+}
+
 #[tokio::test]
 async fn start_unknown_server_fails_without_ghost_entry() {
     let state = test_state();

@@ -55,6 +55,13 @@ pub async fn stop_server(state: State<'_, AppState>, id: ServerId) -> AppResult<
     lifecycle::stop(&state, id).await
 }
 
+#[tauri::command]
+#[tracing::instrument(target = "app::commands", skip(state))]
+pub async fn restart_server(state: State<'_, AppState>, id: ServerId) -> AppResult<()> {
+    info!(target: "app::commands", id, "restart_server");
+    lifecycle::restart(&state, id).await
+}
+
 /// How the webview reaches the gateway; the token is handed over IPC only —
 /// never logged, never persisted.
 #[derive(serde::Serialize)]

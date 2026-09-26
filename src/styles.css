@@ -198,6 +198,7 @@ body {
 }
 
 .remove-button,
+.restart-button,
 .edit-button {
   background: none;
   border: 1px solid var(--border);
@@ -213,7 +214,8 @@ body {
   border-color: var(--err);
 }
 
-.edit-button:hover {
+.edit-button:hover,
+.restart-button:hover {
   color: var(--accent);
   border-color: var(--accent);
 }

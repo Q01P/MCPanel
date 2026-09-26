@@ -20,6 +20,7 @@ export const deleteServerSecret = (id: number, key: string) =>
 export const removeServer = (id: number) => invoke<void>("remove_server", { id });
 export const startServer = (id: number) => invoke<void>("start_server", { id });
 export const stopServer = (id: number) => invoke<void>("stop_server", { id });
+export const restartServer = (id: number) => invoke<void>("restart_server", { id });
 export const gatewayInfo = () => invoke<GatewayInfo>("gateway_info");
 
 export const discoverImports = () => invoke<DiscoveredConfig[]>("discover_imports");

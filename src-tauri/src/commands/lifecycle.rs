@@ -157,6 +157,14 @@ pub async fn start(state: &AppState, id: ServerId) -> AppResult<()> {
     start_with_timeout(state, id, DEFAULT_REQUEST_TIMEOUT).await
 }
 
+/// Stop (if running or mid-start) and start again — the edit → restart →
+/// retest loop as one click. A failed stop is reported rather than papered
+/// over with a start that would only race the old process.
+pub async fn restart(state: &AppState, id: ServerId) -> AppResult<()> {
+    stop(state, id).await?;
+    start(state, id).await
+}
+
 /// Launch-time sweep: start every server marked `auto_start`, concurrently.
 /// Failures mark the individual server Errored (visible in the UI) but never
 /// abort the sweep or the launch.

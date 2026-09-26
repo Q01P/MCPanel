@@ -10,6 +10,7 @@ vi.mock("./api", async (importOriginal) => {
     updateServer: vi.fn(async () => {}),
     setServerSecret: vi.fn(async () => {}),
     removeServer: vi.fn(async () => {}),
+    restartServer: vi.fn(async () => {}),
   };
 });
 
@@ -89,6 +90,18 @@ describe("applyEvent", () => {
       line: "noise",
     });
     expect(usePanel.getState().servers[0]?.status).toEqual({ state: "stopped" });
+  });
+});
+
+describe("restart", () => {
+  it("calls the backend and reports success; a failure resyncs the list", async () => {
+    expect(await usePanel.getState().restart(3)).toBe(true);
+    expect(api.restartServer).toHaveBeenCalledWith(3);
+
+    vi.mocked(api.restartServer).mockRejectedValueOnce({ code: "spawn", message: "nope" });
+    expect(await usePanel.getState().restart(3)).toBe(false);
+    expect(usePanel.getState().error).toBe("nope");
+    expect(api.listServers).toHaveBeenCalled();
   });
 });
 

@@ -30,6 +30,7 @@ interface PanelState {
   deleteSecret: (id: number, key: string) => Promise<boolean>;
   remove: (id: number) => Promise<boolean>;
   toggle: (id: number, run: boolean) => Promise<boolean>;
+  restart: (id: number) => Promise<boolean>;
   setEditing: (server: ServerOverview | null) => void;
   setImportOpen: (open: boolean) => void;
   /** Import reads return null on failure, having set the error banner —
@@ -129,6 +130,17 @@ export const usePanel = create<PanelState>((set, get) => ({
       } else {
         await api.stopServer(id);
       }
+      return true;
+    } catch (error) {
+      set({ error: api.describeError(error) });
+      await get().load();
+      return false;
+    }
+  },
+
+  restart: async (id) => {
+    try {
+      await api.restartServer(id);
       return true;
     } catch (error) {
       set({ error: api.describeError(error) });
