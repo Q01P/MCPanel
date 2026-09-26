@@ -69,9 +69,9 @@ export const TEMPLATES: { label: string; body: string }[] = [
   },
 ];
 
-/** Which face of the workbench is showing: the tools browser, or the raw
- * JSON-RPC editor it can hand requests to. */
-export type WorkbenchMode = "tools" | "raw";
+/** Which face of the workbench is showing: one of the browsers, or the
+ * raw JSON-RPC editor they can hand requests to. */
+export type WorkbenchMode = "tools" | "resources" | "prompts" | "raw";
 
 interface WorkbenchState {
   serverId: number | null;

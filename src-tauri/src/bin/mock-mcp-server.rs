@@ -1,8 +1,8 @@
 //! Test fixture: a tiny stdio binary speaking just enough MCP, with
 //! failure-mode flags (spec §4).
 //!
-//! Default: answers `initialize`, `tools/list`, `tools/call`, `ping`; exits
-//! on stdin EOF.
+//! Default: answers `initialize`, `tools/list`, `tools/call`, `resources/*`,
+//! `prompts/*`, `ping`; exits on stdin EOF.
 //! `--spam`          floods stdout as fast as possible
 //! `--spawn-child`   spawns an idle grandchild, prints its pid
 //! `--no-handshake`  never answers `initialize`
@@ -93,6 +93,22 @@ fn respond(id: &serde_json::Value, result: serde_json::Value) {
     lock.flush().expect("flush response");
 }
 
+fn respond_error(id: &serde_json::Value, code: i64, message: &str) {
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    writeln!(
+        lock,
+        "{}",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": code, "message": message },
+        })
+    )
+    .expect("write error");
+    lock.flush().expect("flush error");
+}
+
 fn serve(flags: Flags) {
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
@@ -125,7 +141,7 @@ fn serve(flags: Flags) {
                 &id,
                 serde_json::json!({
                     "protocolVersion": if flags.wrong_version { "1999-01-01" } else { "2025-06-18" },
-                    "capabilities": { "tools": {} },
+                    "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
                     "serverInfo": { "name": "mock-mcp-server", "version": "0.1.0" },
                 }),
             ),
@@ -226,22 +242,87 @@ fn serve(flags: Flags) {
                 };
                 respond(&id, result);
             }
-            ("ping", Some(id)) => respond(&id, serde_json::json!({})),
-            (_, Some(id)) => {
-                let stdout = std::io::stdout();
-                let mut lock = stdout.lock();
-                writeln!(
-                    lock,
-                    "{}",
-                    serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": { "code": -32601, "message": "method not found" },
-                    })
-                )
-                .expect("write error");
-                lock.flush().expect("flush error");
+            // One concrete resource and one template, so the resources
+            // browser can exercise both the plain read and the variable form.
+            ("resources/list", Some(id)) => respond(
+                &id,
+                serde_json::json!({
+                    "resources": [{
+                        "uri": "mock://greeting",
+                        "name": "greeting",
+                        "description": "a fixed text resource",
+                        "mimeType": "text/plain",
+                    }],
+                }),
+            ),
+            ("resources/templates/list", Some(id)) => respond(
+                &id,
+                serde_json::json!({
+                    "resourceTemplates": [{
+                        "uriTemplate": "mock://echo/{text}",
+                        "name": "echo",
+                        "description": "echoes the path segment as JSON",
+                        "mimeType": "application/json",
+                    }],
+                }),
+            ),
+            ("resources/read", Some(id)) => {
+                let params = message.get("params").cloned().unwrap_or_default();
+                let uri = params.get("uri").and_then(|u| u.as_str()).unwrap_or("");
+                if uri == "mock://greeting" {
+                    respond(
+                        &id,
+                        serde_json::json!({ "contents": [{
+                            "uri": uri, "mimeType": "text/plain", "text": "hello from mock",
+                        }] }),
+                    );
+                } else if let Some(text) = uri.strip_prefix("mock://echo/") {
+                    respond(
+                        &id,
+                        serde_json::json!({ "contents": [{
+                            "uri": uri,
+                            "mimeType": "application/json",
+                            "text": serde_json::json!({ "echo": text }).to_string(),
+                        }] }),
+                    );
+                } else {
+                    respond_error(&id, -32002, &format!("resource not found: {uri}"));
+                }
             }
+            ("prompts/list", Some(id)) => respond(
+                &id,
+                serde_json::json!({
+                    "prompts": [{
+                        "name": "greet",
+                        "description": "a greeting for someone",
+                        "arguments": [
+                            { "name": "who", "description": "whom to greet", "required": true },
+                            { "name": "tone", "description": "how to greet" },
+                        ],
+                    }],
+                }),
+            ),
+            ("prompts/get", Some(id)) => {
+                let params = message.get("params").cloned().unwrap_or_default();
+                let args = params.get("arguments").cloned().unwrap_or_default();
+                let who = args
+                    .get("who")
+                    .and_then(|w| w.as_str())
+                    .unwrap_or("stranger");
+                let tone = args.get("tone").and_then(|t| t.as_str()).unwrap_or("plain");
+                respond(
+                    &id,
+                    serde_json::json!({
+                        "description": "greeting",
+                        "messages": [{
+                            "role": "user",
+                            "content": { "type": "text", "text": format!("[{tone}] hello, {who}") },
+                        }],
+                    }),
+                );
+            }
+            ("ping", Some(id)) => respond(&id, serde_json::json!({})),
+            (_, Some(id)) => respond_error(&id, -32601, "method not found"),
             (_, None) => {} // unknown notification — ignore
         }
     }

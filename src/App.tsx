@@ -6,6 +6,8 @@ import { ServerList } from "./components/ServerList";
 import { Workbench } from "./components/Workbench";
 import { connectEvents } from "./events";
 import { useLogs } from "./logs";
+import { usePrompts } from "./prompts";
+import { useResources } from "./resources";
 import { usePanel } from "./store";
 import { useTools } from "./tools";
 
@@ -14,6 +16,8 @@ export default function App() {
   const applyEvent = usePanel((s) => s.applyEvent);
   const ingest = useLogs((s) => s.ingest);
   const applyToolsEvent = useTools((s) => s.applyEvent);
+  const applyResourcesEvent = useResources((s) => s.applyEvent);
+  const applyPromptsEvent = usePrompts((s) => s.applyEvent);
   const error = usePanel((s) => s.error);
   const setImportOpen = usePanel((s) => s.setImportOpen);
   const clearError = usePanel((s) => s.clearError);
@@ -25,12 +29,14 @@ export default function App() {
         applyEvent(event);
         ingest(event);
         applyToolsEvent(event);
+        applyResourcesEvent(event);
+        applyPromptsEvent(event);
       },
       // Every `ready` (first connect and reconnects) resyncs the list:
       // statuses that changed while the stream was down never replay.
       () => void load(),
     );
-  }, [load, applyEvent, ingest, applyToolsEvent]);
+  }, [load, applyEvent, ingest, applyToolsEvent, applyResourcesEvent, applyPromptsEvent]);
 
   return (
     <main className="panel">

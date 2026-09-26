@@ -225,3 +225,63 @@ async fn garbage_stdout_falls_back_to_logs_while_protocol_works() {
         "boot line missing from log fallback: {log_lines:?}"
     );
 }
+
+/// The fixture serves the resources and prompts surface the workbench
+/// browsers drive; a wrong URI comes back as a JSON-RPC error, not a
+/// transport failure.
+#[tokio::test]
+async fn resources_and_prompts_round_trip() {
+    let (mut managed, handle, _stderr) = spawn_connected(&[], HAPPY_TIMEOUT);
+    let client = handle.client;
+    let handshake = client.handshake().await.expect("handshake");
+    assert!(handshake.capabilities.get("resources").is_some());
+    assert!(handshake.capabilities.get("prompts").is_some());
+
+    let listed = client
+        .request("resources/list", json!({}))
+        .await
+        .expect("resources/list");
+    assert_eq!(listed["resources"][0]["uri"], "mock://greeting");
+    let templates = client
+        .request("resources/templates/list", json!({}))
+        .await
+        .expect("resources/templates/list");
+    assert_eq!(
+        templates["resourceTemplates"][0]["uriTemplate"],
+        "mock://echo/{text}"
+    );
+
+    let read = client
+        .request("resources/read", json!({ "uri": "mock://echo/hi" }))
+        .await
+        .expect("resources/read");
+    assert_eq!(read["contents"][0]["mimeType"], "application/json");
+    assert!(
+        read["contents"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("\"echo\":\"hi\"")
+    );
+
+    let missing = client
+        .request("resources/read", json!({ "uri": "mock://nope" }))
+        .await
+        .expect_err("unknown uri");
+    assert!(matches!(missing, AppError::Rpc { code: -32002, .. }));
+
+    let prompts = client
+        .request("prompts/list", json!({}))
+        .await
+        .expect("prompts/list");
+    assert_eq!(prompts["prompts"][0]["name"], "greet");
+    let got = client
+        .request(
+            "prompts/get",
+            json!({ "name": "greet", "arguments": { "who": "you", "tone": "warm" } }),
+        )
+        .await
+        .expect("prompts/get");
+    assert_eq!(got["messages"][0]["content"]["text"], "[warm] hello, you");
+
+    managed.shutdown().await.expect("shutdown");
+}

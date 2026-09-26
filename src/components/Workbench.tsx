@@ -3,19 +3,24 @@ import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { usePanel } from "../store";
 import { MAX_TIMEOUT_S, TEMPLATES, type WorkbenchMode, useWorkbench } from "../workbench";
+import { PromptBrowser } from "./PromptBrowser";
+import { ResourceBrowser } from "./ResourceBrowser";
 import { ToolBrowser } from "./ToolBrowser";
 
 const EXTENSIONS = [json()];
 
 const MODES: { id: WorkbenchMode; label: string }[] = [
   { id: "tools", label: "Tools" },
+  { id: "resources", label: "Resources" },
+  { id: "prompts", label: "Prompts" },
   { id: "raw", label: "Raw JSON-RPC" },
 ];
 
 /**
- * The "Postman for MCP" part. Two faces over one target server: the tools
- * browser (list → form → call) and the raw JSON-RPC editor. History is
- * shared — a tool call is replayable as the request it amounted to.
+ * The "Postman for MCP" part. Four faces over one target server: the
+ * tools, resources, and prompts browsers (list → form → call) and the raw
+ * JSON-RPC editor. History is shared — every browser call is replayable
+ * as the request it amounted to.
  */
 export function Workbench() {
   const servers = usePanel((s) => s.servers);
@@ -124,6 +129,10 @@ export function Workbench() {
 
       {mode === "tools" ? (
         <ToolBrowser target={target} />
+      ) : mode === "resources" ? (
+        <ResourceBrowser target={target} />
+      ) : mode === "prompts" ? (
+        <PromptBrowser target={target} />
       ) : (
         <div className="workbench-panes">
           <div className="workbench-editor">

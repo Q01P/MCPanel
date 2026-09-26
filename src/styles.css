@@ -1005,6 +1005,31 @@ input:focus-visible {
   font-weight: 600;
 }
 
+.item-tag {
+  margin-left: 0.4rem;
+  font-family: system-ui, sans-serif;
+  font-weight: normal;
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.item-uri {
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-uri {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
 .tool-description {
   color: var(--text-dim);
   font-size: 0.72rem;

@@ -64,7 +64,10 @@ async fn full_lifecycle_walks_the_state_machine() {
     let listed = lifecycle::list(&state).await.expect("list");
     let overview = listed.iter().find(|o| o.record.id == id).expect("listed");
     assert_eq!(
-        overview.handshake.as_ref().map(|h| h.protocol_version.as_str()),
+        overview
+            .handshake
+            .as_ref()
+            .map(|h| h.protocol_version.as_str()),
         Some("2025-06-18")
     );
 
