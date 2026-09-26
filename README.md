@@ -60,7 +60,7 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev \
   libayatana-appindicator3-dev librsvg2-dev
 ```
 
-Then (Rust stable ≥ 1.95 and Node 20+ required):
+Then (Rust stable ≥ 1.95 and Node 22+ required):
 
 ```bash
 npm ci && npm run build        # required once before any cargo command:

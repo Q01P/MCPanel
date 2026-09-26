@@ -176,6 +176,11 @@ body {
   transition: transform 0.15s, background 0.15s;
 }
 
+.switch-busy .slider {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .switch input:checked + .slider {
   background: color-mix(in srgb, var(--accent) 55%, var(--surface));
 }
@@ -183,11 +188,6 @@ body {
 .switch input:checked + .slider::before {
   transform: translateX(18px);
   background: var(--text);
-}
-
-.switch-busy .slider {
-  opacity: 0.6;
-  cursor: progress;
 }
 
 /* The input is visually hidden, so keyboard focus must show on the styled

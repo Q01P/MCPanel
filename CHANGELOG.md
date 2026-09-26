@@ -37,6 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backend-side and never cross into the UI. A server whose credentials fail to
   store is rolled back rather than left unable to start.
 
+### Changed
+
+- **Node 22+ is now required** to build the frontend (previously Node 20+).
+  Node 20 reached end of life in April 2026, and Vitest 5 — which the test
+  suite now runs on — does not support it. CI and the release workflow build
+  on Node 22.
+- Dependency refresh, no behaviour change: Tauri 2.12 (wry 0.57 / tao 0.37),
+  keyring 4.2, rusqlite 0.40.2, thiserror 2.0.21, hyper 1.11.1,
+  tower-http 0.7.1 on the backend; React 19.3, Vite 8.3, Vitest 5, Biome
+  2.5.14, `@tauri-apps/api` / `@tauri-apps/cli` 2.12 on the frontend.
+  The Rust MSRV stays at 1.95.
+
 ## [0.1.0] - 2026-08-08
 
 First public release.

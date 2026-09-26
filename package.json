@@ -15,21 +15,21 @@
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",
-    "@tauri-apps/api": "^2.11.1",
-    "@uiw/react-codemirror": "^4.25.11",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "zustand": "^5.0.14"
+    "@tauri-apps/api": "^2.12.0",
+    "@uiw/react-codemirror": "^4.25.12",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.6",
-    "@tauri-apps/cli": "^2.11.4",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.0.5",
-    "happy-dom": "^20.11.1",
+    "@biomejs/biome": "^2.5.14",
+    "@tauri-apps/cli": "^2.12.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "happy-dom": "^20.14.5",
     "typescript": "^7.0.2",
-    "vite": "^8.2.0",
-    "vitest": "^4.1.10"
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
   }
 }
