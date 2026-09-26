@@ -44,6 +44,8 @@ export function Workbench() {
   const setBody = useWorkbench((s) => s.setBody);
   const setTimeoutS = useWorkbench((s) => s.setTimeoutS);
   const restore = useWorkbench((s) => s.restore);
+  const rerun = useWorkbench((s) => s.rerun);
+  const clearHistory = useWorkbench((s) => s.clearHistory);
   const send = useWorkbench((s) => s.send);
 
   // Selection follows reality: a stopped server can't receive requests.
@@ -165,27 +167,53 @@ export function Workbench() {
 
       {history.length > 0 && (
         <div className="workbench-history">
-          <h3>history</h3>
+          <div className="workbench-history-head">
+            <h3>history</h3>
+            <button
+              type="button"
+              className="ghost-button history-clear"
+              onClick={() => clearHistory()}
+            >
+              clear
+            </button>
+          </div>
           <ul>
-            {history.map((entry) => (
-              <li key={entry.seq}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    restore(entry);
-                    // A replay is an editor action; show the editor.
-                    setMode("raw");
-                  }}
-                  title={entry.body}
-                >
-                  <span className="history-time">{entry.at}</span>
-                  <span className="history-server">{entry.serverName}</span>
-                  <span className="history-preview">
-                    {entry.body.replace(/\s+/g, " ").slice(0, 60)}
-                  </span>
-                </button>
-              </li>
-            ))}
+            {history.map((entry) => {
+              const targetRunning = running.some((s) => s.id === entry.serverId);
+              return (
+                <li key={entry.seq} className="history-row">
+                  <button
+                    type="button"
+                    className="history-open"
+                    onClick={() => {
+                      restore(entry);
+                      // A replay is an editor action; show the editor.
+                      setMode("raw");
+                    }}
+                    title={entry.body}
+                  >
+                    <span className="history-time">{entry.at}</span>
+                    <span className="history-server">{entry.serverName}</span>
+                    <span className="history-preview">
+                      {entry.body.replace(/\s+/g, " ").slice(0, 60)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="history-rerun"
+                    title={
+                      targetRunning
+                        ? "send this request again"
+                        : `${entry.serverName} is not running`
+                    }
+                    disabled={!targetRunning || pending}
+                    onClick={() => void rerun(entry)}
+                  >
+                    re-run
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

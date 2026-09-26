@@ -574,7 +574,50 @@ input:focus-visible {
 .workbench-history h3 {
   font-size: 0.85rem;
   color: var(--text-dim);
-  margin: 0 0 0.4rem;
+  margin: 0;
+}
+
+.workbench-history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.history-clear {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+}
+
+.history-row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+
+.history-row .history-open {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-rerun {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  padding: 0 0.6rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.history-rerun:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.history-rerun:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .workbench-history ul {
@@ -586,7 +629,7 @@ input:focus-visible {
   gap: 0.25rem;
 }
 
-.workbench-history button {
+.workbench-history .history-open {
   display: flex;
   gap: 0.6rem;
   align-items: baseline;
@@ -601,7 +644,7 @@ input:focus-visible {
   text-align: left;
 }
 
-.workbench-history button:hover {
+.workbench-history .history-open:hover {
   border-color: var(--accent);
 }
 
@@ -1036,6 +1079,47 @@ input:focus-visible {
 .resource-uri {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
+}
+
+.tools-cost {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-cost {
+  margin-left: 0.4rem;
+  color: var(--text-dim);
+  font-weight: normal;
+  font-size: 0.68rem;
+}
+
+.tool-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+}
+
+.tool-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: system-ui, sans-serif;
+  font-size: 0.65rem;
+  padding: 0 0.4rem;
+}
+
+.tool-badge-ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.tool-badge-warn {
+  border-color: var(--warn);
+  color: var(--warn);
 }
 
 .tool-description {

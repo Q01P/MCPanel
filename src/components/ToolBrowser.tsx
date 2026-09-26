@@ -1,5 +1,14 @@
 import { type FormEvent, useEffect } from "react";
-import { buildArguments, callBody, formFromSchema, useTools } from "../tools";
+import {
+  annotationBadges,
+  buildArguments,
+  callBody,
+  descriptionWarning,
+  formFromSchema,
+  listCost,
+  toolCost,
+  useTools,
+} from "../tools";
 import type { Field, ResultView, ToolDef } from "../tools";
 import type { ServerOverview } from "../types";
 import { useWorkbench } from "../workbench";
@@ -123,6 +132,26 @@ function Result({ view, raw }: { view: ResultView; raw: string | null }) {
   );
 }
 
+function Badges({ tool }: { tool: ToolDef }) {
+  const badges = annotationBadges(tool);
+  const warning = descriptionWarning(tool);
+  if (badges.length === 0 && !warning) return null;
+  return (
+    <span className="tool-badges">
+      {badges.map((badge) => (
+        <span key={badge.label} className={`tool-badge tool-badge-${badge.tone}`}>
+          {badge.label}
+        </span>
+      ))}
+      {warning && (
+        <span className="tool-badge tool-badge-warn" title="costs context on every turn">
+          {warning}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function ToolList({
   tools,
   selected,
@@ -133,21 +162,31 @@ function ToolList({
   onSelect: (name: string) => void;
 }) {
   return (
-    <ul className="tool-list">
-      {tools.map((tool) => (
-        <li key={tool.name}>
-          <button
-            type="button"
-            className={`tool-item${tool.name === selected ? " tool-item-active" : ""}`}
-            aria-pressed={tool.name === selected}
-            onClick={() => onSelect(tool.name)}
-          >
-            <span className="tool-name">{tool.name}</span>
-            {tool.description && <span className="tool-description">{tool.description}</span>}
-          </button>
-        </li>
-      ))}
-    </ul>
+    <>
+      <p className="tools-cost" title="≈ characters ÷ 4 — what a client spends to list these tools">
+        {tools.length} {tools.length === 1 ? "tool" : "tools"} · ~{listCost(tools)} tokens of
+        context
+      </p>
+      <ul className="tool-list">
+        {tools.map((tool) => (
+          <li key={tool.name}>
+            <button
+              type="button"
+              className={`tool-item${tool.name === selected ? " tool-item-active" : ""}`}
+              aria-pressed={tool.name === selected}
+              onClick={() => onSelect(tool.name)}
+            >
+              <span className="tool-name">
+                {tool.name}
+                <span className="tool-cost">~{toolCost(tool)} tok</span>
+              </span>
+              {tool.description && <span className="tool-description">{tool.description}</span>}
+              <Badges tool={tool} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -225,7 +264,11 @@ export function ToolBrowser({ target }: { target: ServerOverview | null }) {
           tools.length > 0 && <p className="empty">Pick a tool to see its inputs.</p>
         ) : (
           <>
-            <h3 className="tool-title">{tool.name}</h3>
+            <h3 className="tool-title">
+              {tool.annotations?.title ?? tool.title ?? tool.name}
+              <span className="tool-cost">~{toolCost(tool)} tokens</span>
+            </h3>
+            <Badges tool={tool} />
             {tool.description && <p className="tool-blurb">{tool.description}</p>}
 
             <form className="tool-form" onSubmit={submit}>
