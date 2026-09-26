@@ -190,7 +190,8 @@ pub async fn remove(state: &AppState, id: ServerId) -> AppResult<()> {
     stop(state, id).await
 }
 
-/// Start with the server's own configured timeout (or the default).
+/// Start with the server's own configured timeout (or the default). A
+/// deliberate start also ends any crash-restart streak: the user took over.
 pub async fn start(state: &AppState, id: ServerId) -> AppResult<()> {
     start_with_timeout(state, id, None).await
 }
@@ -248,6 +249,17 @@ async fn futures_join_all<F: Future<Output = ()> + Send + 'static>(
 /// `request_timeout` overrides the server's configured timeout (which also
 /// bounds the handshake) — injectable for tests.
 pub async fn start_with_timeout(
+    state: &AppState,
+    id: ServerId,
+    request_timeout: Option<Duration>,
+) -> AppResult<()> {
+    state.cancel_restarts(id);
+    start_inner(state, id, request_timeout).await
+}
+
+/// The start proper, streak untouched — what an automatic restart uses so
+/// its own attempts keep counting toward the cap.
+async fn start_inner(
     state: &AppState,
     id: ServerId,
     request_timeout: Option<Duration>,
@@ -441,7 +453,7 @@ async fn run_startup(
             waiter_state.set_status(id, ServerStatus::Errored { message: crashed });
             return;
         }
-        schedule_restart(waiter_state, id, crashed, started_at.elapsed()).await;
+        schedule_restart(waiter_state, id, crashed, started_at.elapsed(), stopping);
     });
 
     Ok(StartOutcome::Running)
@@ -454,14 +466,31 @@ fn start_erased(
     state: AppState,
     id: ServerId,
 ) -> std::pin::Pin<Box<dyn Future<Output = AppResult<()>> + Send>> {
-    Box::pin(async move { start(&state, id).await })
+    Box::pin(async move { start_inner(&state, id, None).await })
 }
 
 /// Mark the crash and arm the next attempt of the streak, or give up once
 /// the streak is exhausted. The scheduled task selects on the streak's
 /// token so a deliberate stop in the meantime wins.
-async fn schedule_restart(state: AppState, id: ServerId, crashed: String, uptime: Duration) {
+///
+/// Ordering against `stop`, which sets `stopping` *then* cancels restarts:
+/// arm first, check `stopping` second. If the stop flagged before our
+/// check, we see it and stand down; if it flagged after, its cancel ran
+/// after our arm and revoked the token. No interleaving lets a stopped
+/// server come back.
+fn schedule_restart(
+    state: AppState,
+    id: ServerId,
+    crashed: String,
+    uptime: Duration,
+    stopping: Arc<AtomicBool>,
+) {
     let (attempt, token) = state.arm_restart(id, uptime >= RESTART_HEALTHY_UPTIME);
+    if stopping.load(Ordering::SeqCst) {
+        state.cancel_restarts(id);
+        state.set_status(id, ServerStatus::Stopped);
+        return;
+    }
     if attempt > RESTART_MAX_ATTEMPTS {
         state.restart_fired(id, &token);
         state.set_status(

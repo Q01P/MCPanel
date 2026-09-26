@@ -606,3 +606,41 @@ async fn configured_timeout_bounds_the_handshake_and_is_validated() {
     .await;
     assert!(matches!(zero, Err(AppError::InvalidInput(_))));
 }
+
+/// A deliberate start after the streak gave up (or mid-streak) resets the
+/// count: the user took over, so the next crash starts again from one.
+#[tokio::test]
+async fn manual_start_resets_the_restart_streak() {
+    let state = test_state();
+    let id = lifecycle::add(
+        &state,
+        NewServer {
+            restart_on_crash: true,
+            ..common::fixture_server("phoenix2", &[], false)
+        },
+    )
+    .await
+    .expect("add")
+    .id;
+    lifecycle::start(&state, id).await.expect("start");
+    let pid = state.runtime(id).expect("runtime").pid as i32;
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+    wait_for("attempt 1 scheduled", || {
+        matches!(state.status(id), ServerStatus::Errored { ref message } if message.contains("attempt 1 of"))
+    })
+    .await;
+
+    // Take over while the timer runs: the pending restart is cancelled and
+    // the streak forgotten.
+    lifecycle::start(&state, id).await.expect("manual start");
+    assert_eq!(state.status(id), ServerStatus::Running);
+    assert!(!state.restart_pending(id));
+    let pid = state.runtime(id).expect("runtime").pid as i32;
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+    wait_for("streak restarted from one", || {
+        matches!(state.status(id), ServerStatus::Errored { ref message } if message.contains("attempt 1 of"))
+    })
+    .await;
+    lifecycle::stop(&state, id).await.expect("stop");
+    assert_eq!(state.status(id), ServerStatus::Stopped);
+}

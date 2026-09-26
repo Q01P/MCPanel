@@ -1,4 +1,5 @@
 import { describeError, gatewayInfo } from "./api";
+import { usePanel } from "./store";
 import type { GatewayInfo } from "./types";
 
 // The gateway address and token are fixed for the app's lifetime — cache
@@ -24,9 +25,22 @@ export interface RawReply {
   text: string;
 }
 
-/** Longest wait the gateway will honour; mirrored from the backend. It is
- * also the client-side ceiling when the server's own timeout applies. */
+/** Longest wait the gateway will honour for an explicit `timeout_s`;
+ * mirrored from the backend. */
 export const MAX_TIMEOUT_S = 300;
+
+/** The backend's default when a server sets no timeout of its own. */
+const SERVER_DEFAULT_TIMEOUT_S = 30;
+
+/** How long the backend will wait for this call: the explicit timeout, or
+ * the target server's own setting. The client-side abort is derived from
+ * it so a hung gateway can't pin `pending` forever, yet a server allowed
+ * an hour isn't cut off at five minutes. */
+export function effectiveTimeoutS(serverId: number, timeoutS: number | null): number {
+  if (timeoutS != null) return timeoutS;
+  const server = usePanel.getState().servers.find((s) => s.id === serverId);
+  return server?.request_timeout_s ?? SERVER_DEFAULT_TIMEOUT_S;
+}
 
 /** POST one JSON-RPC payload at a running server through the gateway and
  * hand back the body verbatim. The JSON workbench shows this as-is; typed
@@ -47,7 +61,7 @@ export async function postRaw(
     body: JSON.stringify(payload),
     // Client-side bound just above the server's own timeout: a dead
     // gateway or stalled connection must not pin `pending` forever.
-    signal: AbortSignal.timeout(((timeoutS ?? MAX_TIMEOUT_S) + 15) * 1000),
+    signal: AbortSignal.timeout((effectiveTimeoutS(serverId, timeoutS) + 15) * 1000),
   });
   return { ok: res.ok, status: res.status, text: await res.text() };
 }

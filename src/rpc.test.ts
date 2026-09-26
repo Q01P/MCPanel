@@ -5,7 +5,8 @@ vi.mock("./api", async (importOriginal) => ({
   gatewayInfo: vi.fn(async () => ({ url: "http://127.0.0.1:1", token: "tok" })),
 }));
 
-import { envelope, resetGatewayCache, rpc } from "./rpc";
+import { effectiveTimeoutS, envelope, resetGatewayCache, rpc } from "./rpc";
+import { usePanel } from "./store";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -43,6 +44,30 @@ describe("rpc", () => {
     reply(200, { jsonrpc: "2.0", id: 1, result: {} });
     await rpc(4, "ping", {}, null);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:1/mcp/4");
+  });
+
+  it("derives the client-side bound from the server's timeout when none is given", () => {
+    usePanel.setState({
+      servers: [
+        {
+          id: 4,
+          name: "slow",
+          command: "x",
+          args: [],
+          env: {},
+          cwd: null,
+          auto_start: false,
+          request_timeout_s: 900,
+          restart_on_crash: false,
+          status: { state: "running" },
+          handshake: null,
+        },
+      ],
+    });
+    expect(effectiveTimeoutS(4, null)).toBe(900);
+    expect(effectiveTimeoutS(4, 12)).toBe(12);
+    expect(effectiveTimeoutS(5, null)).toBe(30);
+    usePanel.setState({ servers: [] });
   });
 
   it("classifies a JSON-RPC error envelope as the server's error", async () => {

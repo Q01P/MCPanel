@@ -12,18 +12,25 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// PATH as the user's login shell sees it, probed once per launch on Unix.
-/// `None` when there is no shell, it fails, or it takes longer than the
-/// bound — a slow `.zshrc` must not stall a server start.
-#[cfg(unix)]
-fn login_shell_path() -> Option<&'static str> {
-    static PATH: OnceLock<Option<String>> = OnceLock::new();
-    PATH.get_or_init(probe_login_shell_path).as_deref()
+/// The login shell's PATH, once probed. Read by every spawn; written once
+/// by [`warm_login_shell_path`].
+static LOGIN_PATH: OnceLock<Option<String>> = OnceLock::new();
+
+/// Probe the login shell's PATH once, blocking up to the bound. Call from
+/// the blocking pool at launch (before the auto-start sweep), never from a
+/// runtime thread: a slow `.zshrc` must not stall the event loop.
+pub fn warm_login_shell_path() {
+    #[cfg(unix)]
+    LOGIN_PATH.get_or_init(probe_login_shell_path);
+    #[cfg(not(unix))]
+    LOGIN_PATH.get_or_init(|| None);
 }
 
-#[cfg(not(unix))]
+/// PATH as the user's login shell sees it, if the probe has run and
+/// succeeded. Spawns before the probe finishes (or on Windows, or when it
+/// failed) fall back to the process PATH alone.
 fn login_shell_path() -> Option<&'static str> {
-    None
+    LOGIN_PATH.get().and_then(Option::as_deref)
 }
 
 #[cfg(unix)]
