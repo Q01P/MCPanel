@@ -272,6 +272,12 @@ input:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.add-options {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
 .env-editor {
   display: flex;
   flex-direction: column;

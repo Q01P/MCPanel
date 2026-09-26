@@ -84,6 +84,8 @@ pub fn fixture_server(name: &str, args: &[&str], auto_start: bool) -> NewServer 
         env: BTreeMap::new(),
         cwd: None,
         auto_start,
+        request_timeout_s: None,
+        restart_on_crash: false,
     }
 }
 

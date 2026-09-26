@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { describeError } from "./api";
-import { postRaw } from "./rpc";
+import { MAX_TIMEOUT_S, postRaw } from "./rpc";
 
 export interface HistoryEntry {
   seq: number;
@@ -11,8 +11,9 @@ export interface HistoryEntry {
 }
 
 const HISTORY_CAP = 20;
-/** Gateway cap on `?timeout_s=` — mirrored from the backend. */
-export const MAX_TIMEOUT_S = 300;
+export { MAX_TIMEOUT_S };
+/** The backend's built-in per-request timeout, shown as the placeholder
+ * for a server that has not set its own. */
 export const DEFAULT_TIMEOUT_S = 30;
 let nextSeq = 0;
 
@@ -79,13 +80,14 @@ interface WorkbenchState {
   body: string;
   response: string | null;
   pending: boolean;
-  /** Per-request timeout in seconds; slow tools are the point, not an error. */
-  timeoutS: number;
+  /** Per-request timeout override in seconds; null defers to the target
+   * server's own setting. Slow tools are the point, not an error. */
+  timeoutS: number | null;
   history: HistoryEntry[];
   setServer: (id: number | null) => void;
   setMode: (mode: WorkbenchMode) => void;
   setBody: (body: string) => void;
-  setTimeoutS: (seconds: number) => void;
+  setTimeoutS: (seconds: number | null) => void;
   restore: (entry: HistoryEntry) => void;
   /** Record a request so it can be replayed from the raw editor — the tools
    * browser records its calls here too, as the JSON-RPC they amount to. */
@@ -99,14 +101,19 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
   body: TEMPLATES[1].body, // tools/list — the most useful first probe
   response: null,
   pending: false,
-  timeoutS: DEFAULT_TIMEOUT_S,
+  timeoutS: null,
   history: [],
 
   setServer: (id) => set({ serverId: id }),
   setMode: (mode) => set({ mode }),
   setBody: (body) => set({ body }),
   setTimeoutS: (seconds) =>
-    set({ timeoutS: Math.min(Math.max(Math.round(seconds) || 1, 1), MAX_TIMEOUT_S) }),
+    set({
+      timeoutS:
+        seconds == null || !Number.isFinite(seconds)
+          ? null
+          : Math.min(Math.max(Math.round(seconds) || 1, 1), MAX_TIMEOUT_S),
+    }),
   restore: (entry) => set({ serverId: entry.serverId, body: entry.body }),
 
   addHistory: (serverId, serverName, body) =>

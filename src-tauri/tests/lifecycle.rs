@@ -89,7 +89,7 @@ async fn handshake_failure_tears_down_and_marks_errored() {
     let state = test_state();
     let id = add_fixture(&state, "mute", &["--no-handshake"]).await;
 
-    let err = lifecycle::start_with_timeout(&state, id, Duration::from_millis(300))
+    let err = lifecycle::start_with_timeout(&state, id, Some(Duration::from_millis(300)))
         .await
         .expect_err("handshake must time out");
     assert!(matches!(err, mcpanel_lib::error::AppError::Timeout(_)));
@@ -181,6 +181,8 @@ async fn add_rejects_invalid_and_conflicting_configs() {
         env: BTreeMap::new(),
         cwd: cwd.map(Into::into),
         auto_start: false,
+        request_timeout_s: None,
+        restart_on_crash: false,
     };
 
     let blank_name = lifecycle::add(&state, base("   ", "true", None)).await;
@@ -214,6 +216,8 @@ async fn missing_command_is_reported_by_name_before_spawn() {
             env: BTreeMap::new(),
             cwd: None,
             auto_start: false,
+            request_timeout_s: None,
+            restart_on_crash: false,
         },
     )
     .await
@@ -303,6 +307,8 @@ async fn auto_start_sweep_starts_only_marked_servers() {
             env: BTreeMap::new(),
             cwd: None,
             auto_start: true,
+            request_timeout_s: None,
+            restart_on_crash: false,
         },
     )
     .await
@@ -357,7 +363,7 @@ async fn stop_cancels_start_during_initializing() {
 
     let task_state = state.clone();
     let start_task = tokio::spawn(async move {
-        lifecycle::start_with_timeout(&task_state, id, Duration::from_secs(10)).await
+        lifecycle::start_with_timeout(&task_state, id, Some(Duration::from_secs(10))).await
     });
     wait_for("Initializing status", || {
         state.status(id) == ServerStatus::Initializing
@@ -391,7 +397,7 @@ async fn remove_while_starting_leaves_no_process_and_no_row() {
 
     let task_state = state.clone();
     let start_task = tokio::spawn(async move {
-        lifecycle::start_with_timeout(&task_state, id, Duration::from_secs(10)).await
+        lifecycle::start_with_timeout(&task_state, id, Some(Duration::from_secs(10))).await
     });
     wait_for("Initializing status", || {
         state.status(id) == ServerStatus::Initializing
@@ -430,7 +436,7 @@ async fn concurrent_start_and_remove_settle_clean() {
         let remove_state = state.clone();
         let (start_result, remove_result) = tokio::join!(
             tokio::spawn(async move {
-                lifecycle::start_with_timeout(&start_state, id, Duration::from_secs(10)).await
+                lifecycle::start_with_timeout(&start_state, id, Some(Duration::from_secs(10))).await
             }),
             tokio::spawn(async move { lifecycle::remove(&remove_state, id).await }),
         );
@@ -477,4 +483,126 @@ async fn concurrent_start_and_remove_settle_clean() {
     for pid in grandchildren {
         wait_for("grandchild death", || !alive(pid)).await;
     }
+}
+
+/// A server marked restart_on_crash comes back on its own after a crash,
+/// and the row says so while the timer runs.
+#[tokio::test]
+async fn crash_with_restart_on_crash_respawns_with_backoff() {
+    let state = test_state();
+    let id = lifecycle::add(
+        &state,
+        NewServer {
+            restart_on_crash: true,
+            ..common::fixture_server("phoenix", &[], false)
+        },
+    )
+    .await
+    .expect("add")
+    .id;
+    lifecycle::start(&state, id).await.expect("start");
+    let first_pid = state.runtime(id).expect("runtime").pid as i32;
+
+    unsafe { libc::kill(first_pid, libc::SIGKILL) };
+    wait_for("restart scheduled", || {
+        matches!(state.status(id), ServerStatus::Errored { ref message } if message.contains("restarting in 1 s (attempt 1 of"))
+    })
+    .await;
+    assert!(state.restart_pending(id));
+
+    wait_for("respawned", || state.status(id) == ServerStatus::Running).await;
+    let second_pid = state.runtime(id).expect("runtime").pid as i32;
+    assert_ne!(first_pid, second_pid);
+    assert!(!state.restart_pending(id));
+
+    // Crashing again within the healthy window continues the streak with a
+    // longer delay.
+    unsafe { libc::kill(second_pid, libc::SIGKILL) };
+    wait_for("second restart scheduled", || {
+        matches!(state.status(id), ServerStatus::Errored { ref message } if message.contains("restarting in 2 s (attempt 2 of"))
+    })
+    .await;
+
+    // A deliberate stop while the timer runs wins: Stopped now, and no
+    // resurrection after the delay would have elapsed.
+    lifecycle::stop(&state, id).await.expect("stop");
+    assert_eq!(state.status(id), ServerStatus::Stopped);
+    assert!(!state.restart_pending(id));
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(state.status(id), ServerStatus::Stopped);
+    assert!(state.runtime(id).is_none());
+}
+
+/// Without the flag a crash stays Errored, exactly as before.
+#[tokio::test]
+async fn crash_without_the_flag_schedules_nothing() {
+    let state = test_state();
+    let id = add_fixture(&state, "mortal", &[]).await;
+    lifecycle::start(&state, id).await.expect("start");
+    let pid = state.runtime(id).expect("runtime").pid as i32;
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+    wait_for("Errored", || {
+        matches!(state.status(id), ServerStatus::Errored { .. })
+    })
+    .await;
+    assert!(!state.restart_pending(id));
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(matches!(state.status(id), ServerStatus::Errored { .. }));
+    lifecycle::stop(&state, id).await.expect("clear");
+}
+
+#[test]
+fn restart_delay_backs_off_exponentially_and_caps() {
+    assert_eq!(lifecycle::restart_delay(1), Duration::from_secs(1));
+    assert_eq!(lifecycle::restart_delay(2), Duration::from_secs(2));
+    assert_eq!(lifecycle::restart_delay(3), Duration::from_secs(4));
+    assert_eq!(lifecycle::restart_delay(5), Duration::from_secs(16));
+    assert_eq!(lifecycle::restart_delay(6), Duration::from_secs(30));
+    assert_eq!(lifecycle::restart_delay(60), Duration::from_secs(30));
+}
+
+/// The configured timeout bounds the handshake: a mute server fails in
+/// about the configured time, not the 30 s default. And an out-of-range
+/// timeout is rejected at add time.
+#[tokio::test]
+async fn configured_timeout_bounds_the_handshake_and_is_validated() {
+    use mcpanel_lib::error::AppError;
+    let state = test_state();
+    let id = lifecycle::add(
+        &state,
+        NewServer {
+            request_timeout_s: Some(1),
+            ..common::fixture_server("slowpoke", &["--no-handshake"], false)
+        },
+    )
+    .await
+    .expect("add")
+    .id;
+    let started = std::time::Instant::now();
+    let err = lifecycle::start(&state, id).await.expect_err("mute server");
+    assert!(matches!(err, AppError::Timeout(_)));
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "honoured the 1 s timeout"
+    );
+    lifecycle::stop(&state, id).await.expect("clear");
+
+    let too_big = lifecycle::add(
+        &state,
+        NewServer {
+            request_timeout_s: Some(lifecycle::MAX_SERVER_TIMEOUT_S + 1),
+            ..common::fixture_server("greedy", &[], false)
+        },
+    )
+    .await;
+    assert!(matches!(too_big, Err(AppError::InvalidInput(_))));
+    let zero = lifecycle::add(
+        &state,
+        NewServer {
+            request_timeout_s: Some(0),
+            ..common::fixture_server("zero", &[], false)
+        },
+    )
+    .await;
+    assert!(matches!(zero, Err(AppError::InvalidInput(_))));
 }

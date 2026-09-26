@@ -26,6 +26,8 @@ const overview = (id: number): ServerOverview => ({
   env: {},
   cwd: null,
   auto_start: false,
+  request_timeout_s: null,
+  restart_on_crash: false,
   status: { state: "stopped" },
   handshake: null,
 });
@@ -114,6 +116,8 @@ describe("mutations report success", () => {
       env: {},
       cwd: null,
       auto_start: false,
+      request_timeout_s: null,
+      restart_on_crash: false,
     });
     expect(record?.id).toBe(42);
   });
@@ -131,6 +135,8 @@ describe("mutations report success", () => {
       env: {},
       cwd: null,
       auto_start: false,
+      request_timeout_s: null,
+      restart_on_crash: false,
     });
 
     expect(record).toBeNull();

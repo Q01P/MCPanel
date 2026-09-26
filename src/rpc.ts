@@ -24,16 +24,21 @@ export interface RawReply {
   text: string;
 }
 
+/** Longest wait the gateway will honour; mirrored from the backend. It is
+ * also the client-side ceiling when the server's own timeout applies. */
+export const MAX_TIMEOUT_S = 300;
+
 /** POST one JSON-RPC payload at a running server through the gateway and
  * hand back the body verbatim. The JSON workbench shows this as-is; typed
- * callers go through [`rpc`]. */
+ * callers go through [`rpc`]. A null timeout means the server's own. */
 export async function postRaw(
   serverId: number,
   payload: unknown,
-  timeoutS: number,
+  timeoutS: number | null,
 ): Promise<RawReply> {
   const { url, token } = await cachedGatewayInfo();
-  const res = await fetch(`${url}/mcp/${serverId}?timeout_s=${timeoutS}`, {
+  const query = timeoutS == null ? "" : `?timeout_s=${timeoutS}`;
+  const res = await fetch(`${url}/mcp/${serverId}${query}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -42,7 +47,7 @@ export async function postRaw(
     body: JSON.stringify(payload),
     // Client-side bound just above the server's own timeout: a dead
     // gateway or stalled connection must not pin `pending` forever.
-    signal: AbortSignal.timeout((timeoutS + 15) * 1000),
+    signal: AbortSignal.timeout(((timeoutS ?? MAX_TIMEOUT_S) + 15) * 1000),
   });
   return { ok: res.ok, status: res.status, text: await res.text() };
 }
@@ -66,7 +71,7 @@ export async function rpc(
   serverId: number,
   method: string,
   params: unknown,
-  timeoutS: number,
+  timeoutS: number | null,
 ): Promise<RpcOutcome> {
   let reply: RawReply;
   try {

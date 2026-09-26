@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { envelope, rpc } from "./rpc";
 import type { AppEvent } from "./types";
-import { DEFAULT_TIMEOUT_S, useWorkbench } from "./workbench";
+import { useWorkbench } from "./workbench";
 
 // The resources browser: `resources/list` and `resources/templates/list`
 // as one list, a template's URI variables as a form, `resources/read`
@@ -184,7 +184,7 @@ async function fetchPages<T>(
       serverId,
       method,
       cursor === undefined ? {} : { cursor },
-      DEFAULT_TIMEOUT_S,
+      null, // the server's own timeout
     );
     if (outcome.kind !== "result") return { ok: false, message: outcome.message };
     const body = outcome.result as Record<string, unknown> | undefined;
@@ -247,7 +247,7 @@ interface ResourcesState {
   setValue: (name: string, value: string) => void;
   /** The URI a read would fetch — the resource's, or the template expanded. */
   targetUri: () => string | null;
-  read: (serverName: string, timeoutS: number) => Promise<void>;
+  read: (serverName: string, timeoutS: number | null) => Promise<void>;
 }
 
 const EMPTY_READ = { contents: null, rawResult: null, readError: null } as const;

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { envelope, rpc } from "./rpc";
 import type { AppEvent } from "./types";
-import { DEFAULT_TIMEOUT_S, useWorkbench } from "./workbench";
+import { useWorkbench } from "./workbench";
 
 // The prompts browser: `prompts/list` as a list, a prompt's declared
 // arguments as a form (all strings, per spec), `prompts/get` rendered as
@@ -98,7 +98,7 @@ async function fetchPrompts(
       serverId,
       "prompts/list",
       cursor === undefined ? {} : { cursor },
-      DEFAULT_TIMEOUT_S,
+      null, // the server's own timeout
     );
     if (outcome.kind !== "result") return { ok: false, message: outcome.message };
     const body = outcome.result as { prompts?: unknown; nextCursor?: unknown } | undefined;
@@ -130,7 +130,7 @@ interface PromptsState {
   applyEvent: (event: AppEvent) => void;
   select: (name: string | null) => void;
   setValue: (name: string, value: string) => void;
-  get: (serverName: string, timeoutS: number) => Promise<void>;
+  get: (serverName: string, timeoutS: number | null) => Promise<void>;
 }
 
 const EMPTY_GET = { result: null, rawResult: null, getError: null, fieldErrors: {} } as const;

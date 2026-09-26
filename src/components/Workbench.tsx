@@ -2,7 +2,13 @@ import { useEffect } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { usePanel } from "../store";
-import { MAX_TIMEOUT_S, TEMPLATES, type WorkbenchMode, useWorkbench } from "../workbench";
+import {
+  DEFAULT_TIMEOUT_S,
+  MAX_TIMEOUT_S,
+  TEMPLATES,
+  type WorkbenchMode,
+  useWorkbench,
+} from "../workbench";
 import { PromptBrowser } from "./PromptBrowser";
 import { ResourceBrowser } from "./ResourceBrowser";
 import { ToolBrowser } from "./ToolBrowser";
@@ -103,14 +109,20 @@ export function Workbench() {
           </select>
         )}
 
-        <label className="timeout-field" title="per-request timeout (seconds)">
+        <label
+          className="timeout-field"
+          title="per-request timeout in seconds; blank uses the server's own setting"
+        >
           timeout
           <input
             type="number"
             min={1}
             max={MAX_TIMEOUT_S}
-            value={timeoutS}
-            onChange={(e) => setTimeoutS(Number(e.target.value))}
+            value={timeoutS ?? ""}
+            placeholder={String(target?.request_timeout_s ?? DEFAULT_TIMEOUT_S)}
+            onChange={(e) =>
+              setTimeoutS(e.target.value.trim() === "" ? null : Number(e.target.value))
+            }
           />
           s
         </label>

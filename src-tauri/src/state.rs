@@ -147,6 +147,17 @@ pub struct AppState {
     /// and the write, so without this two concurrent mutations lose one
     /// side's changes (e.g. an update clobbering a fresh secret marker).
     config_write: Arc<tokio::sync::Mutex<()>>,
+    /// Crash-restart bookkeeping per server: how many respawns in the
+    /// current streak, and the timer of a restart not yet fired.
+    restarts: Arc<DashMap<ServerId, RestartState>>,
+}
+
+/// Auto-restart streak for one server. `pending` is the cancellation token
+/// of a scheduled restart; `stop`/`remove` cancel it and clear the streak.
+#[derive(Default)]
+pub struct RestartState {
+    pub attempts: u32,
+    pub pending: Option<CancellationToken>,
 }
 
 /// Run a blocking closure on the blocking pool. A panicked task surfaces as
@@ -172,7 +183,51 @@ impl AppState {
             db: Arc::new(Mutex::new(db)),
             events,
             config_write: Arc::new(tokio::sync::Mutex::new(())),
+            restarts: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Bump the restart streak (or start a fresh one when `reset`) and
+    /// arm a new pending token for it; returns the attempt number and the
+    /// token the scheduled restart must select on.
+    pub fn arm_restart(&self, id: ServerId, reset: bool) -> (u32, CancellationToken) {
+        let mut entry = self.restarts.entry(id).or_default();
+        if reset {
+            entry.attempts = 0;
+        }
+        entry.attempts += 1;
+        let token = CancellationToken::new();
+        if let Some(previous) = entry.pending.replace(token.clone()) {
+            previous.cancel();
+        }
+        (entry.attempts, token)
+    }
+
+    /// The scheduled restart for `token` is firing (or gave up): drop the
+    /// pending marker, but keep the streak count for the next crash.
+    pub fn restart_fired(&self, id: ServerId, token: &CancellationToken) {
+        if let Some(mut entry) = self.restarts.get_mut(&id)
+            && entry.pending.as_ref().is_some_and(|p| p == token)
+        {
+            entry.pending = None;
+        }
+    }
+
+    /// A deliberate stop/remove: cancel any scheduled restart and forget the
+    /// streak — the next crash starts counting from one again.
+    pub fn cancel_restarts(&self, id: ServerId) {
+        if let Some((_, state)) = self.restarts.remove(&id)
+            && let Some(pending) = state.pending
+        {
+            pending.cancel();
+        }
+    }
+
+    /// Whether a crash-restart is scheduled and not yet fired.
+    pub fn restart_pending(&self, id: ServerId) -> bool {
+        self.restarts
+            .get(&id)
+            .is_some_and(|entry| entry.pending.is_some())
     }
 
     /// Hold this guard across a config read-modify-write; see `config_write`.

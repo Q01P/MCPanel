@@ -13,6 +13,19 @@ function parseArgs(raw: string): string[] {
   return raw.trim().length === 0 ? [] : raw.trim().split(/\s+/);
 }
 
+/** Mirrors the backend ceiling on a configured per-server timeout. */
+export const MAX_SERVER_TIMEOUT_S = 3600;
+
+/** Blank means "use the default" (null); otherwise a whole number of
+ * seconds within the backend's range, or undefined when it isn't one. */
+export function parseTimeout(raw: string): number | null | undefined {
+  const text = raw.trim();
+  if (text === "") return null;
+  if (!/^\d+$/.test(text)) return undefined;
+  const seconds = Number(text);
+  return seconds >= 1 && seconds <= MAX_SERVER_TIMEOUT_S ? seconds : undefined;
+}
+
 /** Stable identity for list rendering; EnvRow itself has no id. */
 type FormRow = EnvRow & { rowId: number };
 
@@ -31,6 +44,8 @@ export function ServerForm() {
   const [args, setArgs] = useState("");
   const [cwd, setCwd] = useState("");
   const [autoStart, setAutoStart] = useState(false);
+  const [timeoutS, setTimeoutS] = useState("");
+  const [restartOnCrash, setRestartOnCrash] = useState(false);
   const [rows, setRows] = useState<FormRow[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -43,6 +58,8 @@ export function ServerForm() {
     setArgs(editing?.args.join(" ") ?? "");
     setCwd(editing?.cwd ?? "");
     setAutoStart(editing?.auto_start ?? false);
+    setTimeoutS(editing?.request_timeout_s == null ? "" : String(editing.request_timeout_s));
+    setRestartOnCrash(editing?.restart_on_crash ?? false);
     setRows(
       rowsFromEnv(editing?.env ?? {}).map((row) => ({
         ...row,
@@ -62,6 +79,11 @@ export function ServerForm() {
       setFormError(`secret "${missing}" needs a value`);
       return;
     }
+    const timeout = parseTimeout(timeoutS);
+    if (timeout === undefined) {
+      setFormError(`timeout must be a whole number of seconds from 1 to ${MAX_SERVER_TIMEOUT_S}`);
+      return;
+    }
     setFormError(null);
     setSubmitting(true);
     try {
@@ -72,6 +94,8 @@ export function ServerForm() {
         env: envFromRows(rows),
         cwd: cwd.trim() === "" ? null : cwd.trim(),
         auto_start: autoStart,
+        request_timeout_s: timeout,
+        restart_on_crash: restartOnCrash,
       };
       const id = editing
         ? (await update({ ...base, id: editing.id })) ? editing.id : null
@@ -89,6 +113,8 @@ export function ServerForm() {
         setArgs("");
         setCwd("");
         setAutoStart(false);
+        setTimeoutS("");
+        setRestartOnCrash(false);
         setRows([]);
       }
     } finally {
@@ -133,6 +159,35 @@ export function ServerForm() {
             onChange={(e) => setAutoStart(e.target.checked)}
           />
           auto-start
+        </label>
+      </div>
+
+      <div className="add-options">
+        <label
+          className="timeout-field"
+          title="bounds the handshake and any request without its own timeout; blank = 30 s"
+        >
+          timeout
+          <input
+            type="number"
+            min={1}
+            max={MAX_SERVER_TIMEOUT_S}
+            placeholder="30"
+            value={timeoutS}
+            onChange={(e) => setTimeoutS(e.target.value)}
+          />
+          s
+        </label>
+        <label
+          className="auto-start-field"
+          title="respawn with backoff (1 s, 2 s, 4 s… up to 5 tries) if the process exits unexpectedly"
+        >
+          <input
+            type="checkbox"
+            checked={restartOnCrash}
+            onChange={(e) => setRestartOnCrash(e.target.checked)}
+          />
+          restart on crash
         </label>
       </div>
 

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { envelope, rpc } from "./rpc";
 import type { AppEvent } from "./types";
-import { DEFAULT_TIMEOUT_S, useWorkbench } from "./workbench";
+import { useWorkbench } from "./workbench";
 
 // The tools browser: `tools/list` rendered as a list, a tool's `inputSchema`
 // rendered as a form, `tools/call` fired from it. The subset of JSON Schema
@@ -246,7 +246,7 @@ async function fetchTools(
       serverId,
       "tools/list",
       cursor === undefined ? {} : { cursor },
-      DEFAULT_TIMEOUT_S,
+      null, // the server's own timeout
     );
     if (outcome.kind !== "result") return { ok: false, message: outcome.message };
     const body = outcome.result as { tools?: unknown; nextCursor?: unknown } | undefined;
@@ -281,7 +281,7 @@ interface ToolsState {
   applyEvent: (event: AppEvent) => void;
   select: (name: string | null) => void;
   setValue: (name: string, value: string | boolean) => void;
-  call: (serverName: string, timeoutS: number) => Promise<void>;
+  call: (serverName: string, timeoutS: number | null) => Promise<void>;
 }
 
 const EMPTY_CALL = {

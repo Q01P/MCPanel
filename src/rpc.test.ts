@@ -39,6 +39,12 @@ describe("rpc", () => {
     expect(JSON.parse(String(init?.body))).toEqual(envelope("tools/list", {}));
   });
 
+  it("omits the timeout query when deferring to the server's own", async () => {
+    reply(200, { jsonrpc: "2.0", id: 1, result: {} });
+    await rpc(4, "ping", {}, null);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:1/mcp/4");
+  });
+
   it("classifies a JSON-RPC error envelope as the server's error", async () => {
     reply(200, { jsonrpc: "2.0", id: 1, error: { code: -32601, message: "method not found" } });
     expect(await rpc(4, "nope", {}, 5)).toEqual({

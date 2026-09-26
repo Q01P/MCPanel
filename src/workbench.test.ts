@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S, TEMPLATES, useWorkbench } from "./workbench";
+import { MAX_TIMEOUT_S, TEMPLATES, useWorkbench } from "./workbench";
 
 describe("setTimeoutS clamping", () => {
   it("clamps to the gateway's 1..=300 range", () => {
@@ -13,15 +13,14 @@ describe("setTimeoutS clamping", () => {
     expect(useWorkbench.getState().timeoutS).toBe(1);
   });
 
-  it("rounds fractional input and defaults NaN to 1", () => {
+  it("rounds fractional input; null and NaN mean the server's own timeout", () => {
     useWorkbench.getState().setTimeoutS(5.6);
     expect(useWorkbench.getState().timeoutS).toBe(6);
 
+    useWorkbench.getState().setTimeoutS(null);
+    expect(useWorkbench.getState().timeoutS).toBeNull();
     useWorkbench.getState().setTimeoutS(Number.NaN);
-    expect(useWorkbench.getState().timeoutS).toBe(1);
-
-    useWorkbench.getState().setTimeoutS(DEFAULT_TIMEOUT_S);
-    expect(useWorkbench.getState().timeoutS).toBe(DEFAULT_TIMEOUT_S);
+    expect(useWorkbench.getState().timeoutS).toBeNull();
   });
 });
 

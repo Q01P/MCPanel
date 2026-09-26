@@ -14,6 +14,11 @@ export interface ServerRecord {
   env: Record<string, EnvValue>;
   cwd: string | null;
   auto_start: boolean;
+  /** Bounds the handshake and any request without its own timeout;
+   * null = the built-in default. */
+  request_timeout_s: number | null;
+  /** Respawn with backoff after an unexpected exit. */
+  restart_on_crash: boolean;
 }
 
 /** What the `initialize` handshake yielded (backend: protocol.rs). */
